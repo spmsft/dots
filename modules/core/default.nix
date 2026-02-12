@@ -99,6 +99,7 @@
     
   programs.bash = {
     enable = true;
+    enableCompletion = true;
     
     historySize = 50000;
     historyFileSize = 100000;
