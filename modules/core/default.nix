@@ -46,6 +46,8 @@
     jj
     yazi
     uv
+    bash
+    bash-completion
   ];
 
   programs.home-manager.enable = true;

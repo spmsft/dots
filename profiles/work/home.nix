@@ -63,7 +63,9 @@
         paste = "xclip -selection clipboard -o"; 
       };
       initExtra = ''
+        
         export GPG_TTY=$(tty)
+
         # Force WSL to look for the Wayland socket if it's missing
         if [ -z "$WAYLAND_DISPLAY" ]; then
           export WAYLAND_DISPLAY="wayland-0"

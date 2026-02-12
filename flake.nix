@@ -25,7 +25,21 @@
           apply-dots = "cd ~/dots && git add . && nix run home-manager -- switch --flake $HOME/dots#${targetProfile} --override-input dots-local git+file://$HOME/dots-local && cd -";
           update-dots = "cd ~/dots && nix flake update && cd -";
         };
-        
+
+        programs.bash = {
+          enable = true;
+          enableCompletion = true;
+          bashrcExtra = ''
+            if ! command -v have >/dev/null; then
+              have() {
+                unset -v have
+                # This mimics the exact behavior the GRUB script expects
+                type "$1" &>/dev/null && have="yes"
+              }
+            fi
+          '';
+        };
+
         targets.genericLinux.enable = true;
       };
     in {
