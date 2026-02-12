@@ -135,8 +135,6 @@
       fr = "fresh";
       cat = "bat";
       top = "btop";
-      apply-dots = "cd ~/dots && git add . && nix run .#homeConfigurations.work.activationPackage && cd -";
-      update-dots = "cd ~/dots && nike flake update && cd -";
       fzf = "fzf --preview 'bat --style=numbers --color=always --wrap=character {}'";
     };
     

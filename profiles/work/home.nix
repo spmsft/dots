@@ -6,9 +6,6 @@
     ../../modules/features/rust.nix
   ];
 
-  home.username = "stepn";
-  home.homeDirectory = "/home/stepn";
-
   home.packages = with pkgs; [ 
       azure-cli
       xclip
