@@ -363,10 +363,20 @@ HELP
         
         # Calculate orphans: previously_installed - (required by ANY manager)
         # (see get_all_required's comment above for why this must be the
-        # cross-manager union, not just this manager's own required list)
+        # cross-manager union, not just this manager's own required list),
+        # further intersected with actually_installed. Without that second
+        # filter, a package whose literal name simply changed underneath us
+        # (e.g. Arch renaming "pandoc" -> "pandoc-cli", where the old name
+        # never really existed as its own installed package, just an alien-
+        # spec literal that got renamed) would get reported as "to remove"
+        # forever - a phantom entry that `pacman -R`/etc. can't even find
+        # ("target not found"), confusing and pointless to offer. Only a
+        # package that is BOTH no-longer-required AND genuinely still
+        # installed under that literal name is a real orphan worth
+        # reporting/removing.
         local orphans
-        if [ -n "$previously_installed" ]; then
-          orphans=$(comm -23 <(echo "$previously_installed") <(get_all_required))
+        if [ -n "$previously_installed" ] && [ -n "$actually_installed" ]; then
+          orphans=$(comm -23 <(echo "$previously_installed") <(get_all_required) | comm -12 - <(echo "$actually_installed"))
         else
           orphans=""
         fi
@@ -376,8 +386,10 @@ HELP
           # Reconcile the orphan list unconditionally (not just when there
           # are *new* orphans this run) so stale false-positive entries -
           # e.g. a package that moved from this manager's required spec to
-          # another manager's - get purged automatically on the next update,
-          # rather than needing a manual edit to the orphan file forever.
+          # another manager's, or one whose literal name was simply renamed
+          # away entirely (see the "orphans" comment above) - get purged
+          # automatically on the next update, rather than needing a manual
+          # edit to the orphan file forever.
           local tmp_orphan
           tmp_orphan=$(mktemp)
           if [ -f "$orphaned_file" ]; then
@@ -386,7 +398,11 @@ HELP
           if [ -n "$orphans" ]; then
             echo "$orphans" >> "$tmp_orphan"
           fi
-          sort "$tmp_orphan" | uniq | comm -23 - <(get_all_required) > "$orphaned_file" || true
+          if [ -n "$actually_installed" ]; then
+            sort "$tmp_orphan" | uniq | comm -23 - <(get_all_required) | comm -12 - <(echo "$actually_installed") > "$orphaned_file" || true
+          else
+            > "$orphaned_file"
+          fi
           rm "$tmp_orphan"
         fi
         

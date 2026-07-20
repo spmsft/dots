@@ -2186,3 +2186,43 @@ both pass; the build now actually compiles the `vk` derivation (visible
 in the build's derivation list) and wires it into `home-manager-path`,
 confirming it lands on `$PATH` after `apply-dots` with no dots-local
 changes required.
+
+### 2026-07-20 — Fixed phantom-orphan bug in `update-alien-packages` (pandoc rename fallout)
+**Problem:** After the `pandoc` -> `pandoc-cli` alien-spec rename (see prior
+entry), `apply-dots`/`update-alien-packages` on the user's `pheno` machine
+started reporting "To remove: pandoc" under pacman every run, even though
+`pandoc` was never a real package name on that system (it's genuinely
+`pandoc-cli`, installed and working). Manually running `pacman -R pandoc`
+correctly failed with "target not found" - the entry was a phantom.
+**Root cause:** `modules/core/alien-packages.nix`'s `update_packages`
+persists a tracking file (`installed/<mgr>.txt`) that gets overwritten with
+the *literal required-package-list contents* on every successful run, not
+the actually-installed package names. When a required literal name changes
+upstream (pandoc -> pandoc-cli), the *old* name lingers in that tracking
+file from before the rename. The orphan computation only ever cross-checked
+`previously_installed - get_all_required` (i.e. "no longer required by any
+manager"), never against what's actually installed on the system - so a
+phantom name that's simply been renamed away keeps reappearing as a
+"remove this" candidate on every routine `update` run, forever, with no
+self-correction. (`remove_packages`'s `--action remove` path *does* have a
+`comm -12`-based self-healing filter against `actually_installed` at its
+end, but that only runs when the user explicitly invokes `--action
+remove` - not on the default `update` action most people run day-to-day.)
+**Fix:** In `update_packages`, both the immediate `orphans` calculation and
+the persisted `orphaned_file` reconciliation now additionally intersect
+against `actually_installed` (via a second `comm -12` pass), matching the
+same safety filter `remove_packages` already had. A package is now only
+ever reported/tracked as an orphan if it is BOTH no-longer-required AND
+genuinely present in the real system package list - phantom/renamed-away
+names are filtered out automatically on the very next `update` run, with
+no manual `--action remove` invocation needed.
+**Validated:** `nix flake check` and a full `activationPackage` build both
+pass with the updated `alien-packages.nix`.
+**Interim guidance for the user's `pheno` machine:** running
+`update-alien-packages --action remove --target pacman` once (answering
+either y or n to the "Remove pandoc?" prompt is safe either way - the real
+`pandoc-cli` package is untouched, only the nonexistent literal name
+`pandoc` is targeted) will immediately clear the stale entry via the
+existing `remove_packages` self-healing filter; after this fix lands via
+the next `apply-dots`, routine `update` runs will no longer need that
+manual step for future renames.
