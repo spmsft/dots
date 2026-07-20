@@ -2121,3 +2121,20 @@ both succeed on this (CachyOS) machine after the fix; the same
 `nixpkgs#taskwarrior.pname` directly, confirming this wasn't a
 Debian-machine-specific nixpkgs-pin quirk - any machine tracking a
 recent-enough nixpkgs revision would hit the same failure.
+
+### 2026-07-20 — Correction: use `pkgs.taskwarrior3`, not `taskwarrior2`
+**Decision:** The previous entry's choice of `taskwarrior2` was wrong for
+the user's actual intent - user wants the current Taskwarrior 3.x series
+(TaskChampion/SQLite-backed), not the legacy 2.x line `taskwarrior2`
+provides (confirmed via `nix eval`: `taskwarrior2.version` = `2.6.2`,
+`taskwarrior3.version` = `3.4.2`). Switched `modules/suites/
+pim-apps.nix`'s `appSet` entry to `pkgs.taskwarrior3`. `tasksh` only
+talks to `task` via its CLI (not its on-disk storage format), so it
+stays compatible with either series - no `tasksh` changes needed.
+Arch's `task` pacman package (referenced in `modules/suites/
+pim-apps.cachyos-packages.nix`) is *also* already on the 3.x series
+(3.4.2-1 in the `extra` repo as of this writing), so no alien-spec
+change was needed there - the existing `pacman = [ "task" ]` entry
+already matches 3.x on this distro.
+**Validated:** `nix flake check` and a full `activationPackage` build
+both pass with `taskwarrior3`.
