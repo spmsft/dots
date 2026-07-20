@@ -2172,3 +2172,17 @@ in the diff logic itself - the diff is a plain literal-name comparison
 by design (see `get_installed_packages`/`update_packages` in
 `modules/core/alien-packages.nix`), so any such rename silently breaks
 detection until the alien spec is updated to the new literal name.
+
+### 2026-07-20 — `features.vk` flipped to default-enabled
+**Decision:** Reversed the earlier "disabled by default" choice for
+`features.vk` - user confirmed (asked directly, since this contradicts
+the original decision) they want it enabled for everyone by default,
+not opt-in. Changed `modules/features/vk.nix`'s `enable` option from
+`coreLib.mkDefaultDisabledOption` to `coreLib.mkDefaultEnabledOption`.
+No other changes needed - it was already imported universally in
+`modules/contexts/common.nix`, just off by default until now.
+**Validated:** `nix flake check` and a full `activationPackage` build
+both pass; the build now actually compiles the `vk` derivation (visible
+in the build's derivation list) and wires it into `home-manager-path`,
+confirming it lands on `$PATH` after `apply-dots` with no dots-local
+changes required.

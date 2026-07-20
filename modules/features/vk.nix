@@ -25,7 +25,7 @@ let
 in
 {
   options.features.vk = {
-    enable = coreLib.mkDefaultDisabledOption "vk: terminal-first wiki & Zettelkasten engine (gum + helix + quarto + dufs)";
+    enable = coreLib.mkDefaultEnabledOption "vk: terminal-first wiki & Zettelkasten engine (gum + helix + quarto + dufs)";
 
     vaultsDir = lib.mkOption {
       type = lib.types.str;
