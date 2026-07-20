@@ -37,6 +37,7 @@ home.packages = with pkgs; [
     difftastic                        # Semantic diff tool (see programs.git's `difft` alias)
     vivid                             # LS_COLORS generator
     gum                               # Shell script TUI components
+    dufs                              # Zero-config static file/dir HTTP server (used by features.vk)
      
     # --- 3. INTERACTIVE TUI (Full-Screen Interfaces) ---
     # Tools with persistent terminal UI/dashboards

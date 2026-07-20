@@ -5,6 +5,7 @@
     ../features/viewer.nix
     ../features/network.nix
     ../features/appimages.nix
+    ../features/vk.nix
 
     ../suites/network-tools.nix
     ../suites/git-tools.nix

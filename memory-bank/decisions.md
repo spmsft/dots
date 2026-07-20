@@ -1971,12 +1971,133 @@ wrong package name (`taskwarrior` instead of Arch's actual `task`),
 silently falling back to the (working, but Nix-store-provided rather
 than pacman-provided) Nix package on every CachyOS machine; corrected to
 `task`, and added `timew` (real Arch pacman name for timewarrior; `task`/
-`timew` are both in Arch's official `extra` repo per archlinux.org) and
-`tasksh` (AUR-only, added under `paru`).
+`timew` are both in Arch's official `extra` repo per archlinux.org).
+`tasksh` was initially added as AUR-only (`paru = [ "tasksh" ]`), but
+**this was reverted the same day** - see the following entry.
 **Validated:** `nix flake check` and a full `activationPackage` build
 both succeed (`--override-input dots-local git+file://$HOME/dots-local`).
-`nix eval .../config.alienPackages.enabledPackages` confirms `tasksh`/
-`taskwarrior`/`timewarrior` all resolve as alien-managed (i.e. matched
+`nix eval .../config.alienPackages.enabledPackages` confirms
+`taskwarrior`/`timewarrior` resolve as alien-managed (i.e. matched
 against the corrected pacman/paru specs) on this (CachyOS) machine.
 Directly ran the standalone-built `lazytask` binary (`--version`/
 `--help`) to confirm it actually works, not just that it compiles.
+
+### 2026-07-20 — Drop `tasksh`'s AUR spec entirely: build failed under this machine's Nix toolchain
+**Decision:** The AUR `tasksh` PKGBUILD (added in the previous entry)
+failed to build via `paru` on this machine with a linker error:
+`libtasksh.a: error adding symbols: archive has no index; run ranlib to
+add one` / `clang++: error: linker command failed`. This is a static-
+library-indexing mismatch between the AUR build environment's `ar`/
+`ranlib` and this machine's Nix-supplied `clang`/`binutils` (visible in
+the paru log: the C/C++ compiler checks were skipped in favor of
+`/home/sp/.nix-profile/bin/cc`/`c++`, but linking still picked up the
+Nix store's `binutils`) - an environmental toolchain quirk, not a real
+PKGBUILD bug, and not something worth fighting given nixpkgs already
+builds `tasksh` correctly.
+**Fix:** Removed `tasksh`'s entry from `modules/suites/pim-
+apps.cachyos-packages.nix` **entirely** (not just emptied its
+`pacman`/`paru` lists) - `collectAlienSpecs` merges spec files keyed by
+mere top-level attribute presence, and `alien.mkEntry` treats
+`alienSpecs ? pkgName` as "alien takes precedence" regardless of whether
+that package's manager-specific lists are actually non-empty for the
+current distro. So an *empty-but-present* entry would have suppressed
+the Nix package with nothing to install in its place (installing
+nothing at all) - only a fully absent key correctly falls through to
+`pkgs.tasksh`. Documented this footgun with a comment in the spec file
+in place of the deleted entry.
+**Validated:** `nix flake check` and a full `activationPackage` build
+both succeed. Confirmed via `nix eval` that `home.packages` includes the
+plain nixpkgs `tasksh` derivation (`pname == "tasksh"`), and that
+`tasksh` no longer appears among the packages actually resolved through
+`rawAlienSpecs` in `modules/core/alien-packages.nix`'s
+`packagesPerManager` (i.e. `update-alien-packages` won't try to install
+it via pacman/paru at all).
+
+### 2026-07-20 — `common.nix` defaults: taskwarrior, quarto+typst, and GUI-gated `tolaria`; `caddy` removed entirely
+**Decision:** Three small default-enablement changes requested together:
+`suites.pim-apps.taskwarrior` switched from `coreLib.
+mkDefaultDisabledOption` to `coreLib.mkDefaultEnabledOption` (now on by
+default anywhere `suites.pim-apps` is enabled, i.e. universally per the
+entry above). `suites.dtp-tools.quarto` changed from a fixed disabled-by-
+default option with no suite-level tie to `lib.mkDefault cfg.enable`
+inside the suite's existing `config` merge block, matching how `typst`/
+`pandoc` already behaved (quarto's *previous* on-switch was a standalone
+`suites.dtp-tools.quarto = true;` in `priv.nix` - removed, since the new
+default supersedes it, along with a comment noting other contexts can
+still opt in/out explicitly). The `tolaria` AppImage (`priv`-context
+only) had its hardcoded `enable = false;` in `contexts/priv/appimages/
+manifest.nix` removed and replaced with a new cross-suite default in
+`modules/features/appimages.nix`: `features.appimages.apps.tolaria.
+enable = lib.mkDefault config.core.enableGuiDefaults;` - mirroring the
+existing `features.appimages.enable` GUI-tied pattern, so it now follows
+the same "on whenever a GUI is present" rule as the rest of the AppImage
+defaults instead of being permanently off. Separately, `caddy` was
+removed from the whole setup per explicit request: its option/appSet
+entry/doc-comment in `modules/suites/dev-tools.nix`, its `caddy = true;`
+in `priv.nix`, its pacman spec in `dev-tools.cachyos-packages.nix`, and
+the now-empty `dev-tools.debian-packages.nix` file (caddy was its only
+entry) were all deleted.
+**Validated:** `nix flake check` passed; a full `activationPackage`
+build passed under the real `work` context (this machine); and, since
+`work` context wouldn't otherwise exercise the priv-only `tolaria`/
+`quarto` paths, a **simulated `priv` + GUI-enabled** synthetic
+`dots-local` (`context = "priv"; enableGuiDefaults = true;
+graphicalBackend = "wayland";`) was built and `nix eval`-checked to
+confirm `suites.dtp-tools.quarto`, `suites.pim-apps.taskwarrior`, and
+`features.appimages.apps.tolaria.enable` all resolve `true` under that
+scenario.
+
+### 2026-07-20 — New `features.vk`: terminal-first wiki/Zettelkasten engine
+**Decision:** Added a new `modules/features/vk.nix` + `modules/features/vk/`
+subdir implementing `vk`, a `gum`-driven TUI wrapper around `helix`,
+`quarto`, and `dufs` for managing local Markdown Zettelkasten "vaults"
+under `$HOME/Vaults/<name>/` (per-vault `permanent/`/`literature/`/
+`daily/` note trees, Quarto-rendered to a git-ignored `_site/`, with an
+AST-based `wikilinks.lua` Pandoc filter resolving `[[wikilink]]` syntax
+to real `.html` links, including cross-vault relative links). Follows
+the same "small Nix preamble resolves package paths into shell
+variables + one big static, shellcheck-able `.sh` file" pattern as
+`viewer.nix`/`clipboard.nix`, rather than embedding the whole script as
+a Nix string. The shared Lua filter lives once at `modules/features/vk/
+wikilinks.lua` and is copied verbatim into every new vault by `vk new`
+(not regenerated per-vault from a heredoc), so every vault always gets
+the exact same, already-tested filter.
+`gum`/`helix` were already core packages (`modules/core/default.nix`);
+added `dufs` there too (zero-config static HTTP server, used by `vk
+watch`/`vk serve-all`) since it's a genuinely general-purpose core
+utility, not `vk`-specific config. `quarto`/`git` are pulled in directly
+by `features.vk`'s own `home.packages` so `vk` works regardless of which
+suites/contexts happen to be enabled (`quarto` already has its own
+nixpkgs-quarto-pin override in `flake.nix`, reused automatically here).
+Imported `../features/vk.nix` universally in `modules/contexts/
+common.nix`, **disabled by default** (`coreLib.mkDefaultDisabledOption`)
+- this is a new, personal-choice, vault-managing tool (not a baseline
+utility like `features.viewer`), so it should be opt-in per
+context/host rather than pulled in unconditionally.
+`vk`'s `watch`/`build`/`serve-all` subcommands accept `-p`/`--port` and
+`-b`/`--bind` (alias `--host`), both also as `--flag=value`, in any
+order relative to the optional vault-name argument - parsed by a small
+`parse_serve_flags`/`build_dufs_args` helper pair in `vk.sh` that passes
+them straight through to `dufs`'s own `-p/--port`/`-b/--bind` flags,
+falling back to dufs' own defaults (`0.0.0.0:5000`) when unset rather
+than hardcoding an address/port in the script.
+**Gotcha (fixed during implementation):** the original spec's shell used
+several bare `[ -z "$X" ] && exit 1` / `[ -n "$Y" ] && ARR+=(...)`
+statements under `set -e` - when the test is *false* (the common/success
+path), `&&` short-circuits and the whole statement's exit status is 1,
+which under `set -e` aborts the entire script even though nothing was
+actually wrong. Rewrote every such guard as an explicit `if ...; then
+...; fi` block instead of relying on `&&` short-circuiting as a
+"one-line if" - this class of bug is easy to miss since it only
+manifests on the *non-error* branch (e.g. `vk watch` immediately exiting
+0-but-silently, or 1-with-no-message, whenever `--bind` was left unset).
+**Validated:** `nix flake check` and a full `activationPackage` build
+pass (feature disabled, its default). Also temporarily flipped the
+default to enabled, rebuilt, confirmed the `vk` wrapper derivation
+builds and its `--help`/unknown-command paths behave correctly, and ran
+`vk.sh` standalone (stubbed `gum`/`quarto`/`dufs`/`git`/`hx` binaries via
+env-var overrides) to confirm `new` scaffolds a vault correctly and
+`watch`/`serve-all`'s `--port`/`--bind` flag parsing (both orders, both
+`--flag value` and `--flag=value` forms, and the fallback defaults)
+all produce the expected `dufs` argv and printed URL, before reverting
+the default back to disabled.
