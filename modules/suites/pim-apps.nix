@@ -10,7 +10,12 @@ let
       todoman = { enable = cfg.todoman; pkg = pkgs.todoman; };
       pimsync = { enable = cfg.pimsync; pkg = pkgs.pimsync; };
       khard = { enable = cfg.khard; pkg = pkgs.khard; };
-      taskwarrior = { enable = cfg.taskwarrior; pkg = pkgs.taskwarrior; };
+      # nixpkgs renamed/replaced the old `taskwarrior` attribute with
+      # `taskwarrior2` (still Taskwarrior 2.x, same `task` binary/pname -
+      # `taskwarrior3` is the newer 3.x data-format rewrite, which tasksh
+      # 1.2.0 isn't necessarily compatible with, so deliberately staying
+      # on 2.x here).
+      taskwarrior = { enable = cfg.taskwarrior; pkg = pkgs.taskwarrior2; };
       tasksh = { enable = cfg.tasksh; pkg = pkgs.tasksh; };
       timewarrior = { enable = cfg.timewarrior; pkg = pkgs.timewarrior; };
       superproductivity = { enable = cfg.superproductivity; pkg = pkgs.superproductivity; };

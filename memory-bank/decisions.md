@@ -2101,3 +2101,23 @@ env-var overrides) to confirm `new` scaffolds a vault correctly and
 `--flag value` and `--flag=value` forms, and the fallback defaults)
 all produce the expected `dufs` argv and printed URL, before reverting
 the default back to disabled.
+
+### 2026-07-20 — Fix: `pkgs.taskwarrior` renamed/thrown; use `pkgs.taskwarrior2`
+**Decision:** nixpkgs converted `taskwarrior` to a `throw` alias
+("'taskwarrior' has been renamed to/replaced by 'taskwarrior2'",
+2025-10-27) on a revision the `pheno` (Debian) machine's `dots-local`
+had already picked up, breaking `suites.pim-apps`'s `appSet` entry which
+still referenced `pkgs.taskwarrior` directly. Switched to
+`pkgs.taskwarrior2` in `modules/suites/pim-apps.nix` - confirmed via
+`nix eval` that `taskwarrior2`'s own `pname`/`version` are still
+`"taskwarrior"`/`2.6.2` (i.e. it's the same Taskwarrior 2.x, just
+renamed at the nixpkgs-attribute level - not a new major version).
+Deliberately did NOT switch to `taskwarrior3` (nixpkgs' newer 3.x
+rewrite, different on-disk data format) since `tasksh` 1.2.0 (also in
+this suite) targets the 2.x task API/data format.
+**Validated:** `nix flake check` and a full `activationPackage` build
+both succeed on this (CachyOS) machine after the fix; the same
+`pkgs.taskwarrior` throw was reproduced locally by evaluating
+`nixpkgs#taskwarrior.pname` directly, confirming this wasn't a
+Debian-machine-specific nixpkgs-pin quirk - any machine tracking a
+recent-enough nixpkgs revision would hit the same failure.
