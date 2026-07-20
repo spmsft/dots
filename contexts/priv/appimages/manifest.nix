@@ -31,7 +31,11 @@
     file = "Tolaria*.AppImage";
     desktopName = "Tolaria";
     command = "tolaria";
-    enable = false;
+    # Enabled by default whenever this machine has a real GUI - see the
+    # `features.appimages.apps.tolaria.enable` cross default in
+    # modules/features/appimages.nix, which always wins over this
+    # manifest-level value (mkDefault there is still overridable per
+    # dots-local/host.nix).
   };
 
   steam = {

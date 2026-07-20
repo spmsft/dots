@@ -11,6 +11,8 @@ let
       pimsync = { enable = cfg.pimsync; pkg = pkgs.pimsync; };
       khard = { enable = cfg.khard; pkg = pkgs.khard; };
       taskwarrior = { enable = cfg.taskwarrior; pkg = pkgs.taskwarrior; };
+      tasksh = { enable = cfg.tasksh; pkg = pkgs.tasksh; };
+      timewarrior = { enable = cfg.timewarrior; pkg = pkgs.timewarrior; };
       superproductivity = { enable = cfg.superproductivity; pkg = pkgs.superproductivity; };
     };
   };
@@ -26,13 +28,29 @@ in {
     
     khard = coreLib.mkDefaultDisabledOption "khard - console CardDAV client";
     
-    taskwarrior = coreLib.mkDefaultDisabledOption "Taskwarrior - command line task manager";
+    taskwarrior = coreLib.mkDefaultEnabledOption "Taskwarrior - command line task manager";
+
+    # taskshell (tasksh) - interactive Taskwarrior REPL/shell.
+    tasksh = coreLib.mkDefaultDisabledOption "tasksh (taskshell) - interactive Taskwarrior REPL";
+
+    timewarrior = coreLib.mkDefaultDisabledOption "Timewarrior - command line time tracker (Taskwarrior companion)";
+
+    # lazytask (github.com/OsamaMahmood/lazytask) - a standalone lazygit-
+    # style TUI for TaskChampion/Taskwarrior-compatible storage. Not in
+    # nixpkgs and no AUR package exists either - built from source
+    # (pkgs/lazytask.nix via rustPlatform.buildRustPackage, wired in via
+    # flake.nix's externalOverlay as pkgs.external.lazytask), same
+    # override mechanism as quarkdown/bookokrat/snippets-ls.
+    lazytask = coreLib.mkDefaultDisabledOption "lazytask - lazygit-style TUI for TaskChampion/Taskwarrior";
     
     superproductivity = coreLib.mkDefaultDisabledOption "SuperProductivity - GUI todo app with timeboxing";
   };
 
   config = lib.mkIf cfg.enable {
-    home.packages = appSet.packages;
+    home.packages = appSet.packages
+      ++ (with pkgs; builtins.filter (p: p != null) [
+        (lib.mkIf cfg.lazytask external.lazytask)
+      ]);
 
     # Declare alien packages as enabled
     alienPackages.enabledPackages = appSet.alienEnabled;

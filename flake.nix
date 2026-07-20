@@ -116,6 +116,7 @@
              doCheck = false;
            });
            external.quarkdown = prev.callPackage ./pkgs/quarkdown.nix {};
+           external.lazytask = prev.callPackage ./pkgs/lazytask.nix {};
            # Only quarto itself needs pinning (see the nixpkgs-quarto-pin
            # input comment above for the actual, verified reason) - pandoc
            # is NOT separately overridden here, since its version is

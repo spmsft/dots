@@ -7,7 +7,6 @@ let
 in {
 
   imports = [
-    ../../modules/suites/pim-apps.nix
     ../../modules/features/bookokrat.nix
     ../../modules/features/quarkdown.nix
   ];
@@ -77,9 +76,9 @@ in {
       prettier = true;
   };
 
-  suites.dtp-tools = {
-      quarto = true;
-  };
+  # suites.dtp-tools.quarto now defaults true whenever the suite itself
+  # is enabled (modules/suites/dtp-tools.nix) - no longer needs stating
+  # here.
 
   suites.pim-apps = {
       enable = true;

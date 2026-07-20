@@ -1937,3 +1937,46 @@ only `priv.nix` enables it), `suites.network-tools.bandwhich = true`
 (from dots-local's own host.nix), `suites.network-tools.gping = true`
 (now-plain default-enabled option), `suites.cloud-tools.azure = true` and
 `suites.cloud-tools.rclone = true` (both from `work.nix`).
+
+### 2026-07-20 — Add tasksh/timewarrior/lazytask to `suites.pim-apps`, enable universally in common
+**Decision:** Added three Taskwarrior-companion tools to `modules/suites/
+pim-apps.nix`: `tasksh` (taskshell - interactive Taskwarrior REPL),
+`timewarrior` (time tracker), and `lazytask` (a standalone lazygit-style
+TUI for TaskChampion/Taskwarrior-compatible storage, github.com/
+OsamaMahmood/lazytask). `tasksh`/`timewarrior` are real nixpkgs packages,
+added to the suite's existing `appSet` like every other alien-manageable
+option. `lazytask` has **no nixpkgs attribute and no AUR package**
+(confirmed via `nix search` and the AUR RPC search API returning zero
+results) - explicitly built from source rather than fetched as a
+prebuilt-binary tarball (user's explicit instruction: "pull from pacman/
+paru if possible, if not build from src. dont want pkgs that pulls a
+binary tarball!"), via a new `pkgs/lazytask.nix` using `rustPlatform.
+buildRustPackage` (`fetchFromGitHub` at tag `v0.1.0` + `cargoHash` -
+Cargo.lock pins `taskchampion` and all transitive deps, including
+`libsqlite3-sys`'s bundled/vendored sqlite3 C source, entirely from
+crates.io, no git deps, so a plain vendor build works with no extra
+native inputs), wired into `flake.nix`'s `externalOverlay` as `pkgs.
+external.lazytask` (same override mechanism as quarkdown/bookokrat/
+snippets-ls) since it can't go through the alien-package machinery (no
+distro package exists to substitute).
+Also enabled the whole `suites.pim-apps` suite **universally** in
+`modules/contexts/common.nix` (moved its import there from `priv.nix`,
+which previously was its only importer) with `tasksh`/`timewarrior`/
+`lazytask` all defaulted on - the other pim-apps options (khal/todoman/
+pimsync/khard/superproductivity, all genuinely priv/personal-calendar-
+specific) stay off by default, still opt-in per context/host as before.
+Also fixed a latent alien-spec bug found while touching `modules/suites/
+pim-apps.cachyos-packages.nix`: `taskwarrior`'s pacman spec used the
+wrong package name (`taskwarrior` instead of Arch's actual `task`),
+silently falling back to the (working, but Nix-store-provided rather
+than pacman-provided) Nix package on every CachyOS machine; corrected to
+`task`, and added `timew` (real Arch pacman name for timewarrior; `task`/
+`timew` are both in Arch's official `extra` repo per archlinux.org) and
+`tasksh` (AUR-only, added under `paru`).
+**Validated:** `nix flake check` and a full `activationPackage` build
+both succeed (`--override-input dots-local git+file://$HOME/dots-local`).
+`nix eval .../config.alienPackages.enabledPackages` confirms `tasksh`/
+`taskwarrior`/`timewarrior` all resolve as alien-managed (i.e. matched
+against the corrected pacman/paru specs) on this (CachyOS) machine.
+Directly ran the standalone-built `lazytask` binary (`--version`/
+`--help`) to confirm it actually works, not just that it compiles.

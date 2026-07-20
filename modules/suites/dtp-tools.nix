@@ -45,15 +45,15 @@ in
     # `suites.dtp-tools.enable` anywhere else always wins.
     { suites.dtp-tools.enable = lib.mkDefault config.suites.tui-apps.enable; }
 
-    # typst/pandoc are lightweight, broadly useful document tools -
+    # quarto/typst/pandoc are lightweight, broadly useful document tools -
     # default them on whenever the suite itself is on. graphviz/
     # imagemagick are mostly useful alongside an actual GUI (rendering
     # diagrams/images you'll then look at) - same global condition
     # gui-apps.nix uses for its own baseline (config.core.
     # enableGuiDefaults, purely dotsLocal-derived - see modules/core/
-    # platform.nix). quarto stays opt-in only (heavier, more
-    # specialized toolchain) - enable explicitly per context/host.
+    # platform.nix).
     {
+      suites.dtp-tools.quarto = lib.mkDefault cfg.enable;
       suites.dtp-tools.typst = lib.mkDefault cfg.enable;
       suites.dtp-tools.pandoc = lib.mkDefault cfg.enable;
       suites.dtp-tools.graphviz = lib.mkDefault config.core.enableGuiDefaults;

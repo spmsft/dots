@@ -213,6 +213,12 @@ in
     # (or `= true;` on a CLI-only machine that still wants this) always
     # wins.
     { features.appimages.enable = lib.mkDefault config.core.enableGuiDefaults; }
+    # Tolaria (priv context only) is a GUI-only app - default it on
+    # whenever there's a real GUI backend, same condition as the feature's
+    # own enable above, rather than leaving it opt-in-per-machine like
+    # every other cataloged app (see contexts/priv/appimages/manifest.nix's
+    # own comment). Still just mkDefault - dots-local can still override.
+    { features.appimages.apps.tolaria.enable = lib.mkDefault config.core.enableGuiDefaults; }
     (lib.mkIf cfg.enable {
       home.packages = with pkgs; [
         appimage-run
