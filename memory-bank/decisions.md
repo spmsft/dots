@@ -2138,3 +2138,37 @@ change was needed there - the existing `pacman = [ "task" ]` entry
 already matches 3.x on this distro.
 **Validated:** `nix flake check` and a full `activationPackage` build
 both pass with `taskwarrior3`.
+
+### 2026-07-20 — Fix: `update-alien-packages` perpetually re-offering `pandoc` on Arch/CachyOS
+**Decision:** Arch renamed the `pandoc` pacman package to `pandoc-cli`
+(the new package `Provides`/`Replaces` the old `pandoc` name, per
+archlinux.org). `update-alien-packages`' missing-package detection
+(`modules/core/alien-packages.nix`'s `update_packages`) compares literal
+package names via `comm -23 <(required) <(pacman -Qq)` - it has no
+concept of `Provides`, so as long as `modules/suites/dtp-
+tools.cachyos-packages.nix` required the literal name `pandoc`, the diff
+would see `pandoc` in the required list but never in `pacman -Qq`'s
+output (which reports the real installed name, `pandoc-cli`) - so it was
+never actually possible for this to resolve as "installed", no matter
+how many times the user re-ran `update-alien-packages`. Confirmed on
+this (CachyOS) machine: `pacman -Qq pandoc` and `pacman -Qq pandoc-cli`
+both resolve to `pandoc-cli` (the actually-installed package), and
+`which pandoc` -> `/usr/sbin/pandoc` confirms it really is installed,
+just under the new package name.
+**Fix:** Changed `modules/suites/dtp-tools.cachyos-packages.nix`'s
+`pandoc` alien spec from `pacman = [ "pandoc" ];` to `pacman = [
+"pandoc-cli" ];`. `modules/suites/dtp-tools.debian-packages.nix`'s
+`apt = [ "pandoc" ];` is unaffected (Debian's package is still literally
+named `pandoc`) - this was Arch-repo-specific.
+**Validated:** `nix flake check` and a full `activationPackage` build
+both pass; confirmed the generated `~/.local/share/dots/packages/
+required/pacman.txt` now lists `pandoc-cli` (matching `pacman -Qq`'s
+real output) instead of the never-matching `pandoc`.
+**General lesson for future package-rename issues:** when
+`update-alien-packages` perpetually re-offers a package that's
+genuinely installed, suspect a `pacman`/`apt`/etc. package rename
+(old-name -> new-name via `Provides`/`Replaces`) before assuming a bug
+in the diff logic itself - the diff is a plain literal-name comparison
+by design (see `get_installed_packages`/`update_packages` in
+`modules/core/alien-packages.nix`), so any such rename silently breaks
+detection until the alien spec is updated to the new literal name.

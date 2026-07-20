@@ -15,7 +15,14 @@
 
   pandoc = {
     packages = {
-      pacman = [ "pandoc" ];
+      # Arch renamed the pacman package to "pandoc-cli" (it Provides/
+      # Replaces the old "pandoc" name) - `pacman -Qq` reports the
+      # package as installed under its real name "pandoc-cli", so
+      # update-alien-packages' installed-vs-required diff (which compares
+      # literal package names, not `Provides`) would otherwise think
+      # "pandoc" is perpetually missing even when it's fully installed,
+      # and keep re-offering to install it every run.
+      pacman = [ "pandoc-cli" ];
     };
   };
 
