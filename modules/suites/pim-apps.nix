@@ -1,8 +1,49 @@
-{ config, lib, pkgs, alien, ... }:
+{ config, lib, pkgs, alien, dotsLocal, ... }:
 
 let
   cfg = config.suites.pim-apps;
   coreLib = import ../core/lib.nix { inherit lib; };
+
+  # Mirrors modules/features/task-sync.nix's own url-resolution logic
+  # (kept in sync manually - see that file for the canonical/fuller
+  # version with its own comments) purely to decide what to print into
+  # lazytask's launcher below.
+  ts = dotsLocal.taskSync;
+  effectiveUrl =
+    if ts.url != null then ts.url
+    else if ts.autoSpawnServer then "http://127.0.0.1:${toString ts.port}"
+    else null;
+  syncConfigured = ts.credential != null && effectiveUrl != null;
+
+  # lazytask (v0.1.0, pinned in pkgs/lazytask.nix) has no way to load
+  # sync settings from its own config.toml, nor via CLI flags/env vars -
+  # see its src/config.rs (only theme/keybindings/
+  # taskwarrior{taskrc_path,data_location,sync_enabled}/ui fields exist,
+  # no server/credential fields at all) and its README's explicit "Sync
+  # settings are currently held in memory only and not persisted across
+  # launches" caveat (entered by hand each session via the Shift+S sync
+  # config modal). So "hooking" dotsLocal.taskSync's server config into
+  # lazytask can't be a real config-file wire-up (there's nothing in its
+  # schema to write to yet) - the best available integration today is a
+  # launcher wrapper that prints the values to copy into that modal, so
+  # the user doesn't have to remember/look them up separately. Revisit
+  # this once/if lazytask persists sync config itself.
+  lazytaskPkg =
+    if syncConfigured then
+      pkgs.writeShellScriptBin "lazytask" ''
+        #!/usr/bin/env bash
+        cat <<SYNCINFO
+        Task sync is configured (dotsLocal.taskSync) - paste these into
+        lazytask's Shift+S sync config modal (it doesn't persist sync
+        settings across launches yet, so this is needed every session):
+          Server URL:        ${effectiveUrl}
+          Encryption Secret: ${ts.credential}
+
+        SYNCINFO
+        exec ${pkgs.external.lazytask}/bin/lazytask "$@"
+      ''
+    else pkgs.external.lazytask;
+
   appSet = coreLib.mkAppSet {
     inherit alien;
     apps = {
@@ -60,9 +101,7 @@ in {
 
   config = lib.mkIf cfg.enable {
     home.packages = appSet.packages
-      ++ (with pkgs; builtins.filter (p: p != null) [
-        (lib.mkIf cfg.lazytask external.lazytask)
-      ]);
+      ++ lib.optional cfg.lazytask lazytaskPkg;
 
     # Declare alien packages as enabled
     alienPackages.enabledPackages = appSet.alienEnabled;

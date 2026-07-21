@@ -463,7 +463,7 @@ in {
 
           port = mkOption {
             type = types.port;
-            default = 8080;
+            default = 9999;
             description = ''
               Port for the auto-spawned `taskchampion-sync-server`, and
               the port assumed by the computed default `url` (see
@@ -479,7 +479,7 @@ in {
               default from `autoSpawnServer`/`port` if this machine hosts
               its own server, else leave sync unconfigured" - set this
               explicitly to point at a server running on a *different*
-              machine (e.g. `"http://otherhost:8080"`).
+              machine (e.g. `"http://otherhost:9999"`).
             '';
           };
 

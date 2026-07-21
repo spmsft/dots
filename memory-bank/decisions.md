@@ -2281,3 +2281,30 @@ came up active/enabled via systemd --user, `curl 127.0.0.1:8080` returns
 untouched with the new sync block cleanly appended below them, re-running
 the filter+append snippet standalone twice in isolation confirmed it's
 idempotent (no duplicate blocks), and `dots-local` is now `chmod 700`.
+
+### 2026-07-21 — Changed default taskSync port to 9999; hooked lazytask into task-sync config
+**Decision:** `dotsLocal.taskSync.port`'s default changed from 8080 to
+9999 (`modules/local/schema.nix`, `templates/local/flake.nix`'s example).
+This machine (lub) and its running `taskchampion-sync-server` systemd
+unit were updated to match via a real `apply-dots` run.
+**lazytask hook:** Investigated `lazytask` v0.1.0 (the pinned version in
+`pkgs/lazytask.nix`) to wire `dotsLocal.taskSync`'s server URL/credential
+into it - found it has NO persistent sync-config mechanism at all: its
+`src/config.rs` schema has no server/credential fields (only theme/
+keybindings/taskwarrior{taskrc_path,data_location,sync_enabled}/ui), it
+takes no relevant CLI flags/env vars (`src/main.rs` only accepts
+`--config`/`--verbose`), and its own README explicitly states sync
+settings are "held in memory only and not persisted across launches" -
+entered by hand every session via the app's own Shift+S modal. Given
+that, `modules/suites/pim-apps.nix` now wraps the `lazytask` binary (only
+when `dotsLocal.taskSync` is actually configured, i.e. both a resolved
+server URL and a credential exist) with a `writeShellScriptBin` launcher
+that prints those two values to the terminal before `exec`-ing the real
+binary, so the user has them ready to paste into the Shift+S modal
+instead of having to look them up separately each session. This is a
+best-effort convenience wrapper, not a real config-file/env wire-up -
+revisit if/when lazytask itself adds persistent sync-config storage.
+**Validated:** `nix flake check` + full `activationPackage` build pass;
+confirmed via a real `apply-dots` run on lub that the systemd unit now
+binds `127.0.0.1:9999` (server responds 200 there) and that `lazytask`
+on `$PATH` now prints the correct URL/credential before launching.

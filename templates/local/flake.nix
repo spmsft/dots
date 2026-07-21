@@ -94,7 +94,7 @@
       # taskSync = {
       #   autoSpawnServer = true;   # run taskchampion-sync-server locally via systemd --user
       #   interface = "127.0.0.1"; # or "0.0.0.0" to accept connections from other machines
-      #   port = 8080;
+      #   port = 9999;
       #   credential = "@@TASK_SYNC_CREDENTIAL@@";
       #   syncInterval = "never";  # e.g. "15m"/"1h", or "never" to only sync manually
       # };
