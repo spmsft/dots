@@ -19,6 +19,11 @@ Before making any non-trivial change, **read `memory-bank/*.md`**, at minimum:
    *every time*, not just when a decisions.md entry happens to jog your
    memory - this list exists specifically because that kind of drift kept
    happening silently across multiple phases before it did.
+4. `memory-bank/AGENTS.md` — checklist of packages this repo pins to a
+   manual upstream source snapshot (no nixpkgs attribute, so nothing
+   bumps them automatically: `pkgs/lazytask.nix`, `pkgs/quarkdown.nix`,
+   `modules/features/butterfish.nix`). Consult this whenever asked to
+   "update" one of these tools, or periodically to check them all.
 
 The original multi-phase re-architecture this memory bank was built for
 is complete (see `project-brief.md`) - there's no longer a phased
