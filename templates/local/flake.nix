@@ -35,6 +35,14 @@
       # enableGuiDefaults = true;
       # graphicalBackend = "wayland";   # or "x11"/"wsl"/"macos"
 
+      # Lua/LuaJIT defaults for suites.dev-tools - both optional, shown
+      # here at their actual defaults (lua on, luajit off) purely for
+      # reference; uncomment only to override:
+      # lua = {
+      #   enable = true;   # suites.dev-tools.lua (pkgs.lua5_4: `lua`/`luac`)
+      #   jit = false;     # suites.dev-tools.luajit (pkgs.luajit: `luajit`)
+      # };
+
       # Hardware/context axes - all optional, uncomment and set what
       # applies to this machine (see `dots-local-options` for the full
       # list and what each one drives, via dots/modules/rules.nix).

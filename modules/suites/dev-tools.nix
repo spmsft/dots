@@ -1,4 +1,4 @@
-{ config, lib, pkgs, alien, ... }:
+{ config, lib, pkgs, alien, dotsLocal, ... }:
 
 let
   cfg = config.suites.dev-tools;
@@ -13,6 +13,21 @@ let
       mkcert = { enable = cfg.mkcert; pkg = pkgs.mkcert; };
     };
   };
+
+  # nixpkgs' luajit derivation ships its own `bin/lua` symlink (pointing
+  # at luajit itself) alongside `bin/luajit` - which collides with
+  # pkgs.lua5_4's own `bin/lua` if both packages are installed together
+  # (see dotsLocal.lua.jit's doc comment). Re-expose only `luajit`,
+  # dropping that symlink, so `lua` (from cfg.lua/pkgs.lua5_4, installed
+  # independently below) and `luajit` can always coexist without a
+  # home-manager file collision, regardless of which combination of the
+  # two toggles is on.
+  luajitNoLuaSymlink = pkgs.runCommand "luajit-no-lua-symlink"
+    { meta = pkgs.luajit.meta; }
+    ''
+      mkdir -p "$out/bin"
+      ln -s "${pkgs.luajit}/bin/luajit" "$out/bin/luajit"
+    '';
 in
 {
   options.suites.dev-tools = {
@@ -53,6 +68,16 @@ in
     # Document/Publishing tools moved to suites.dtp-tools (quarto/typst/
     # pandoc) - see that suite's own module for the full rationale.
 
+    # Lua tooling - defaults come from dotsLocal.lua.* (see
+    # modules/local/schema.nix) rather than a hardcoded true/false, so
+    # each machine can opt into/out of LuaJIT without editing this repo.
+    lua = lib.mkEnableOption "Lua interpreter (pkgs.lua5_4 - provides `lua`/`luac`)" // {
+      default = dotsLocal.lua.enable;
+    };
+    luajit = lib.mkEnableOption "LuaJIT (JIT-compiled Lua 5.1 with FFI - provides `luajit`)" // {
+      default = dotsLocal.lua.jit;
+    };
+
     # Other tools
     egglog = coreLib.mkDefaultDisabledOption "egglog (e-graph toolkit)";
     steel = coreLib.mkDefaultDisabledOption "steel (Scheme interpreter)";
@@ -78,6 +103,8 @@ in
       (lib.mkIf cfg.haskell cabal-install)
       (lib.mkIf cfg.haskell stack)
       (lib.mkIf cfg.entr entr)
+      (lib.mkIf cfg.lua lua5_4)
+      (lib.mkIf cfg.luajit luajitNoLuaSymlink)
       (lib.mkIf cfg.egglog egglog)
       (lib.mkIf cfg.steel steel)
       (lib.mkIf cfg.prettier prettier)

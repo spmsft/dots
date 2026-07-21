@@ -2432,3 +2432,37 @@ shared client_id has real synced version history. The old orphaned
 per-app client_ids/task data from before this fix (created entirely
 during this session's own smoke-testing, not real user data) are left
 in place as harmless orphaned rows rather than actively cleaned up.
+
+### 2026-07-21 — `suites.dev-tools.lua`/`luajit`, defaults driven by new `dotsLocal.lua`
+
+Added Lua/LuaJIT to `suites.dev-tools`: `lua` (pkgs.lua5_4, `lua`/`luac`)
+default-on, `luajit` (pkgs.luajit, `luajit`) default-off. Both defaults
+come from a new `dotsLocal.lua = { enable; jit; }` schema field rather
+than being hardcoded, so any machine can flip either one via its own
+`dots-local/flake.nix` without touching this repo - mirrors how
+`gpu`/`compositor`/`isWsl` drive other suite defaults via `rules.nix`,
+just wired directly (dev-tools.nix takes `dotsLocal` as a module arg,
+matching `task-sync.nix`/`pim-apps.nix`'s existing precedent) since
+there's no conditional "when" here, just a straight default passthrough.
+
+**Collision found and fixed:** nixpkgs' `luajit` derivation ships its
+own `bin/lua` symlink (pointing at luajit itself) in addition to
+`bin/luajit` - installing it alongside `pkgs.lua5_4` (which has its own
+distinct `bin/lua`) would be a home-manager file collision the moment
+both `lua` and `luajit` are enabled together. Fixed by wrapping
+`pkgs.luajit` in a tiny `pkgs.runCommand` derivation that only
+re-exposes `bin/luajit`, dropping the `bin/lua` symlink entirely - so
+`lua` (when enabled) always and only resolves to the standard
+interpreter, and `luajit` is always a separate, non-colliding command.
+This also directly satisfies the "fallback when no luajit present"
+requirement: nothing ever depends on luajit's own `bin/lua`, so `lua`
+behaves identically whether or not `luajit` is enabled.
+
+Updated `templates/local/flake.nix` with a commented-out `lua = {...}`
+example at its literal defaults. This machine (lub) was left on
+defaults (`lua.enable = true`, `lua.jit = false` - user's explicit
+choice) - no dots-local edit needed since those already match.
+**Validation:** full `activationPackage` build, standalone build of the
+luajit-no-lua-symlink wrapper confirming only `bin/luajit` exists and
+runs correctly, and a real `apply-dots` on lub confirming `lua` is on
+PATH (5.4.7) and `luajit` is correctly absent (default off).

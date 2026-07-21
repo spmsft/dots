@@ -281,6 +281,50 @@ in {
       description = "Default value of $NIXON (1=nix-managed shell, 0=native host shell) on a fresh login.";
     };
 
+    # --- Lua / LuaJIT (suites.dev-tools.lua/luajit) ---
+    lua = mkOption {
+      description = "Per-machine defaults for suites.dev-tools' Lua/LuaJIT toggles - see each field below.";
+      type = types.submodule {
+        options = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              Default value of suites.dev-tools.lua (installs
+              pkgs.lua5_4, providing `lua`/`luac`). On by default - a
+              plain Lua interpreter is small and broadly useful (e.g.
+              scripting/config-testing), unlike LuaJIT below which is
+              opt-in.
+            '';
+          };
+
+          jit = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Default value of suites.dev-tools.luajit (installs
+              pkgs.luajit, providing `luajit` - a JIT-compiled Lua 5.1
+              with FFI, useful for performance-sensitive scripting).
+              Off by default: unlike `enable` above, this is an opt-in
+              extra, not a general-purpose default. nixpkgs' luajit
+              derivation also ships its own `bin/lua` symlink pointing
+              at itself; suites.dev-tools strips that symlink before
+              installing it (see modules/suites/dev-tools.nix) so
+              enabling both `enable` and `jit` together never collides
+              on `bin/lua` - plain `lua` always resolves to the
+              standard interpreter from `enable` regardless of whether
+              `jit` is also on, and `luajit` is always a distinct
+              command. If `enable` is off while `jit` is on, only
+              `luajit` exists on PATH (no `lua` fallback command) -
+              anything invoking `lua` directly should degrade
+              gracefully (e.g. check `command -v lua`) rather than
+              assume it's always present.
+            '';
+          };
+        };
+      };
+    };
+
     # --- Location / freeform tags (new axes, inert for now) ---
     location = mkOption {
       type = types.nullOr types.str;
