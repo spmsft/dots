@@ -13,7 +13,7 @@ let
     if ts.url != null then ts.url
     else if ts.autoSpawnServer then "http://127.0.0.1:${toString ts.port}"
     else null;
-  syncConfigured = ts.credential != null && effectiveUrl != null;
+  syncConfigured = ts.credential != null && ts.clientId != null && effectiveUrl != null;
 
   # lazytask (v0.1.0, pinned in pkgs/lazytask.nix) has no native way to
   # load sync settings from its own config.toml, CLI flags, or env vars
@@ -31,23 +31,21 @@ let
   # full investigation trail and rationale.
   #
   # lazytask keeps its own standalone TaskChampion replica, separate from
-  # Taskwarrior CLI's ~/.task data, so it needs its own device client_id
-  # (must parse as a UUID) - distinct from sync.server.client_id in
-  # ~/.taskrc. We generate one on first use and persist it so it's
-  # stable across launches (important for the sync server's per-device
-  # snapshot/versioning), rather than regenerating a fresh one every run.
+  # Taskwarrior CLI's ~/.task data - but for both replicas to merge into
+  # ONE task list on the shared server, they must present the SAME
+  # client_id (see dotsLocal.taskSync.clientId's description /
+  # modules/features/task-sync.nix's 2026-07-21 correction: client_id
+  # identifies the shared task list, not a per-device/per-app identity).
+  # So we just pass through the same statically-configured ts.clientId
+  # here, exactly like ts.credential below - no runtime generation or
+  # persistence needed.
   lazytaskPkg =
     if syncConfigured then
       pkgs.writeShellScriptBin "lazytask" ''
         #!/usr/bin/env bash
         set -euo pipefail
-        client_id_file="$HOME/.local/share/lazytask/client_id"
-        mkdir -p "$(dirname "$client_id_file")"
-        if [ ! -s "$client_id_file" ]; then
-          cat /proc/sys/kernel/random/uuid > "$client_id_file"
-        fi
         export LAZYTASK_SYNC_SERVER_URL=${lib.escapeShellArg effectiveUrl}
-        export LAZYTASK_SYNC_CLIENT_ID="$(cat "$client_id_file")"
+        export LAZYTASK_SYNC_CLIENT_ID=${lib.escapeShellArg ts.clientId}
         export LAZYTASK_SYNC_ENCRYPTION_SECRET=${lib.escapeShellArg ts.credential}
         exec ${pkgs.external.lazytask}/bin/lazytask "$@"
       ''

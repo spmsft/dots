@@ -2359,3 +2359,76 @@ and runtime `$HOME` expansion, (5) ran the actual patched binary under a
 pty (`script -qec "timeout 3 lazytask" ...`) and confirmed it starts
 without panicking/erroring and persists a stable client-id file across
 runs.
+
+### 2026-07-21 — Fixed two real production bugs: `awk` missing from activation `$PATH`, and `sync.server.client_id` semantics
+
+**Symptom reported by user:** after syncing tasks in lazytask, `task
+sync` errored with "sync.server.client_id and sync.encryption_secret are
+required", and once that was fixed, `task list` still showed zero tasks
+even after a successful `task sync`.
+
+**Bug 1 — `~/.taskrc` sync block duplicating on every `apply-dots` run.**
+`modules/features/task-sync.nix`'s `hookTaskrcSync` activation script
+uses a strip-then-append model (bare `awk` to delete any previously
+written block, then unconditionally re-append a fresh one) specifically
+so repeated activations stay idempotent. In practice it wasn't: the
+block count climbed by one on every single `apply-dots` run (confirmed
+by running it repeatedly and counting). Root cause: home-manager's
+generated `activate` script sets its own minimal, hand-picked `$PATH`
+(bash-interactive, coreutils, diffutils, findutils, gettext, gnugrep,
+gnused, jq, ncurses, plus `nix-env`'s dir) that does **not** include
+`awk` at all. The bare `awk` invocation silently failed
+("command not found", exit 127) inside a `cmd > file && mv ...` chain,
+leaving an empty 0-byte `.dots-tmp` file and short-circuiting the `mv` -
+so the strip step was a complete no-op every activation while the append
+kept running regardless. Confirmed by finding a stray empty
+`~/.taskrc.dots-tmp` left on disk, and by the fact the identical script
+logic worked perfectly when run manually in an interactive shell (which
+has a normal `$PATH`).
+**Fix:** reference `${pkgs.gawk}/bin/awk` (an absolute Nix store path)
+instead of relying on bare `awk` resolving via `$PATH`. Verified by
+running `apply-dots` twice in a row post-fix and confirming the block
+count stays at exactly 1 both times, with no stray `.dots-tmp` file.
+**General lesson:** any `home.activation.*` script needing an external
+tool must reference its absolute Nix store path - activation scripts do
+NOT inherit a normal interactive shell's `$PATH`.
+
+**Bug 2 — `sync.server.client_id` misunderstood as a per-device identity.**
+Both `task-sync.nix` (Taskwarrior CLI) and `pim-apps.nix` (lazytask)
+each generated their OWN separate random UUID for "client_id", on the
+(wrong) assumption it was a per-device/per-app identity akin to
+`sync.encryption_secret`'s per-list secret. Per the real `task-sync(5)`
+manpage, `client_id` actually identifies **the shared task list itself**
+("a client ID identifying your tasks" - singular/possessive) - every
+replica that should merge into one list (another machine's `task` CLI,
+or a different app's own standalone TaskChampion replica on the SAME
+machine, e.g. lazytask) must use the exact SAME client_id, exactly like
+`credential`. Since `taskchampion-sync-server` doesn't set
+`--allow-client-id` (so it silently accepts and auto-creates ANY
+client_id), two different client_ids against the same server/secret
+produced two entirely separate, non-merging task lists with no error at
+all - explaining why `task sync` "succeeded" yet `task list` stayed
+empty. Confirmed directly via
+`sqlite3 ~/.local/share/taskchampion-sync-server/*.sqlite3 "select
+client_id from clients;"`, which showed two unrelated client_ids (one
+per app) each with their own real synced version history.
+**Fix:** added `dotsLocal.taskSync.clientId` (nullOr str, default null)
+to `modules/local/schema.nix`, treated exactly like `credential` -
+generated ONCE (`setup.sh` now also generates a `TASK_SYNC_CLIENT_ID`
+UUID alongside the existing credential, substituted into
+`templates/local/flake.nix`'s commented-out example) and copied
+unchanged to every dotsLocal that should share this task list.
+`task-sync.nix`'s and `pim-apps.nix`'s per-app/per-machine runtime UUID
+generation (`/proc/sys/kernel/random/uuid` + a persisted file) was
+removed entirely in favor of directly interpolating the same
+`ts.clientId` value in both places; `syncConfigured` in both files now
+also requires `ts.clientId != null`.
+**Validation:** full `activationPackage` build + real `apply-dots` run
+on lub; confirmed `~/.taskrc`'s `sync.server.client_id` and lazytask's
+generated wrapper's `LAZYTASK_SYNC_CLIENT_ID` are now byte-identical;
+ran `task add` + `task sync`, confirmed `task list` shows the new task,
+and confirmed via the server's sqlite `clients` table that the new
+shared client_id has real synced version history. The old orphaned
+per-app client_ids/task data from before this fix (created entirely
+during this session's own smoke-testing, not real user data) are left
+in place as harmless orphaned rows rather than actively cleaned up.

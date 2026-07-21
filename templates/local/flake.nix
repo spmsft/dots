@@ -84,17 +84,22 @@
       # };
 
       # Taskwarrior/TaskChampion sync - off by default (no sync.server.url/
-      # sync.encryption_secret are ever written to ~/.taskrc unless BOTH a
-      # server URL - explicit `url`, or implied by `autoSpawnServer` - AND
-      # `credential` are set; see `dots-local-options` for full details of
-      # each field). A random credential was pre-generated below by
-      # setup.sh so you don't need to invent a secure secret by hand the
-      # moment you decide to turn this on - every device syncing to the
-      # same server must share this exact value.
+      # sync.server.client_id/sync.encryption_secret are ever written to
+      # ~/.taskrc unless a server URL - explicit `url`, or implied by
+      # `autoSpawnServer` - AND `clientId` AND `credential` are all set;
+      # see `dots-local-options` for full details of each field). A
+      # random credential and clientId were pre-generated below by
+      # setup.sh so you don't need to invent them by hand the moment you
+      # decide to turn this on - every device/app syncing to the same
+      # task list (including e.g. lazytask, on the SAME machine) must
+      # share these exact values (clientId identifies the shared task
+      # list itself, not a per-device identity - see
+      # modules/features/task-sync.nix's 2026-07-21 correction note).
       # taskSync = {
       #   autoSpawnServer = true;   # run taskchampion-sync-server locally via systemd --user
       #   interface = "127.0.0.1"; # or "0.0.0.0" to accept connections from other machines
       #   port = 9999;
+      #   clientId = "@@TASK_SYNC_CLIENT_ID@@";
       #   credential = "@@TASK_SYNC_CREDENTIAL@@";
       #   syncInterval = "never";  # e.g. "15m"/"1h", or "never" to only sync manually
       # };

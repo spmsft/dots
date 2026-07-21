@@ -428,9 +428,10 @@ in {
       description = ''
         Taskwarrior/TaskChampion sync configuration, consumed by
         modules/features/task-sync.nix. Entirely inert by default: no
-        `~/.taskrc` sync block is ever written unless BOTH a server URL
-        (explicit `url`, or implied by `autoSpawnServer`) AND `credential`
-        are set - see each field's own description below.
+        `~/.taskrc` sync block is ever written unless a server URL
+        (explicit `url`, or implied by `autoSpawnServer`), `clientId`,
+        AND `credential` are ALL set - see each field's own description
+        below.
       '';
       type = types.submodule {
         options = {
@@ -480,6 +481,38 @@ in {
               its own server, else leave sync unconfigured" - set this
               explicitly to point at a server running on a *different*
               machine (e.g. `"http://otherhost:9999"`).
+            '';
+          };
+
+          clientId = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = ''
+              Taskwarrior's `sync.server.client_id` - despite the name,
+              this identifies YOUR SHARED TASK LIST, not one specific
+              device/replica (see `task-sync(5)`: "a client ID
+              identifying your tasks", singular/possessive - every
+              replica that should see the same tasks, whether that's a
+              second machine's `task` CLI or a different app on the SAME
+              machine with its own standalone TaskChampion replica (e.g.
+              lazytask - see modules/suites/pim-apps.nix), MUST use this
+              same value plus the same `credential` to merge into one
+              shared task list on the server; a different `clientId`
+              means an entirely separate, unrelated task list even
+              against the same server/credential.
+              CORRECTION (2026-07-21): an earlier version of this schema
+              had no `clientId` field at all and instead had
+              modules/features/task-sync.nix generate a fresh random
+              UUID per machine (and modules/suites/pim-apps.nix generate
+              a SEPARATE one again for lazytask) - this was wrong: it
+              silently made every replica its own isolated task list, so
+              `task sync` "succeeded" but never actually shared tasks
+              with lazytask or any other machine. Treat this exactly like
+              `credential` below: generate it ONCE (`setup.sh` does this
+              for you into the template), and copy the SAME value to
+              every machine/dotsLocal that should share this task list.
+              Null (the default) means no `~/.taskrc` sync block is
+              written at all, same as `credential` being null.
             '';
           };
 

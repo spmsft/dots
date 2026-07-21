@@ -85,6 +85,21 @@ if [ ! -d "$DOTS_LOCAL" ]; then
         TASK_SYNC_CREDENTIAL=$(head -c32 /dev/urandom | od -An -tx1 | tr -d ' \n')
     fi
 
+    # Pre-generate a client_id too (dotsLocal.taskSync.clientId). Must be
+    # a valid UUID (per task-sync(5)/taskchampion-sync-server), and -
+    # unlike a per-device secret - this SAME value has to be copied to
+    # every machine/app (lazytask included) that should share this one
+    # task list, not regenerated per machine. See
+    # modules/features/task-sync.nix's 2026-07-21 correction note for
+    # why: client_id identifies the shared list, not a device identity.
+    if [ -r /proc/sys/kernel/random/uuid ]; then
+        TASK_SYNC_CLIENT_ID=$(cat /proc/sys/kernel/random/uuid)
+    elif command -v uuidgen >/dev/null 2>&1; then
+        TASK_SYNC_CLIENT_ID=$(uuidgen)
+    else
+        TASK_SYNC_CLIENT_ID=$(head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n' | sed -E 's/(.{8})(.{4})(.{4})(.{4})(.{12})/\1-\2-\3-\4-\5/')
+    fi
+
     sed -i \
         -e "s|@@SYSTEM@@|${SYSTEM}|g" \
         -e "s|@@BARCH@@|${BARCH}|g" \
@@ -97,6 +112,7 @@ if [ ! -d "$DOTS_LOCAL" ]; then
         -e "s|@@HOMEDIR@@|${HOME}|g" \
         -e "s|@@CONTEXT@@|${CONTEXT}|g" \
         -e "s|@@TASK_SYNC_CREDENTIAL@@|${TASK_SYNC_CREDENTIAL}|g" \
+        -e "s|@@TASK_SYNC_CLIENT_ID@@|${TASK_SYNC_CLIENT_ID}|g" \
         flake.nix
 
     git add flake.nix .gitignore appimages.nix host.nix
@@ -131,4 +147,6 @@ echo "   packages, ...) in ~/dots-local/host.nix - already wired in via extraMod
 echo "6. Run apply-dots to activate changes"
 echo "7. (Optional) Uncomment 'taskSync' in ~/dots-local/flake.nix to enable Taskwarrior"
 echo "   sync (auto-spawned server and/or a client hook into ~/.taskrc) - a random"
-echo "   sync credential was already pre-generated into that commented-out block"
+echo "   sync credential AND client_id were already pre-generated into that"
+echo "   commented-out block. If sharing one task list across multiple machines/apps"
+echo "   (e.g. lazytask), copy the SAME credential and clientId to each of them."

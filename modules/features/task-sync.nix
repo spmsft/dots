@@ -3,11 +3,29 @@
 # autoSpawnServer, mirroring features.vk's "always available" precedent),
 # optionally runs it as a systemd --user service, optionally runs `task
 # sync` on a timer, and - the part that actually wires a client up to a
-# server - hooks `sync.server.url`/`sync.encryption_secret` into
-# ~/.taskrc via a filter+append model (strip any previously-written
-# dots-managed block, then re-append a fresh one) so none of the user's
-# own hand-written taskrc settings (or Taskwarrior's own first-run
-# auto-init of data.location/news.version) are ever clobbered.
+# server - hooks `sync.server.url`/`sync.server.client_id`/
+# `sync.encryption_secret` into ~/.taskrc via a filter+append model
+# (strip any previously-written dots-managed block, then re-append a
+# fresh one) so none of the user's own hand-written taskrc settings (or
+# Taskwarrior's own first-run auto-init of data.location/news.version)
+# are ever clobbered.
+#
+# CORRECTION (2026-07-21, take 2): the first correction here (see
+# memory-bank/decisions.md) fixed the "client_id required" error by
+# generating a random per-machine UUID - but that was ALSO wrong.
+# `sync.server.client_id` identifies your shared TASK LIST, not a
+# device/replica (see task-sync(5): "a client ID identifying your
+# tasks" - singular/possessive). Every replica that should merge into
+# the same task list - another machine's `task` CLI, or lazytask's own
+# separate local replica on THIS machine - must use the SAME client_id
+# (now dotsLocal.taskSync.clientId, generated once by setup.sh, copied
+# manually to every dotsLocal that should share this list), not a
+# freshly-generated one per machine/app. Confirmed by observing
+# `task sync` report "Success!" yet `task list` stay empty even after
+# lazytask had pushed real data to the same server: the CLI and
+# lazytask were syncing under two different client_ids, so the server
+# treated them as two entirely separate, unrelated task lists despite
+# sharing a URL and encryption_secret.
 { config, lib, pkgs, dotsLocal, ... }:
 
 let
@@ -25,11 +43,11 @@ let
     else if ts.autoSpawnServer then "http://127.0.0.1:${toString ts.port}"
     else null;
 
-  # Sync is only actually wired into ~/.taskrc once both a server URL and
-  # the shared encryption credential are known - either alone is
-  # meaningless (a URL with no credential can't authenticate/decrypt;
-  # a credential with no URL has nowhere to sync to).
-  syncConfigured = ts.credential != null && effectiveUrl != null;
+  # Sync is only actually wired into ~/.taskrc once a server URL, the
+  # shared client id, AND the shared encryption credential are all
+  # known - any one alone is meaningless (see dotsLocal.taskSync's
+  # option descriptions for why all three are required together).
+  syncConfigured = ts.credential != null && ts.clientId != null && effectiveUrl != null;
 
   beginMarker = "# >>> dots-managed taskwarrior sync (modules/features/task-sync.nix) >>>";
   endMarker = "# <<< dots-managed taskwarrior sync <<<";
@@ -95,16 +113,32 @@ in
       # the next `apply-dots` activation will pick it up here.
       if [ -f "$TASKRC" ]; then
         if grep -qF ${lib.escapeShellArg beginMarker} "$TASKRC"; then
-          awk -v b=${lib.escapeShellArg beginMarker} -v e=${lib.escapeShellArg endMarker} '
+          # NOTE: home-manager's activation script PATH is a minimal,
+          # hand-picked set (bash/coreutils/diffutils/findutils/gettext/
+          # gnugrep/gnused/jq/ncurses - see the generated activate
+          # script's own `export PATH=` line) that does NOT include
+          # `awk` at all. Referencing bare `awk` here silently failed
+          # every real activation ("command not found" -> empty
+          # redirect target -> `&&` short-circuits the `mv`, so the
+          # strip step was a silent no-op while the append below kept
+          # running regardless) - discovered by comparing a manual
+          # interactive-shell run (which has a normal $PATH and "worked")
+          # against the real activation-script run (which didn't), and
+          # confirmed by finding a stray empty "$TASKRC.dots-tmp" left
+          # behind. Reference gawk's absolute store path instead of
+          # relying on $PATH, to avoid depending on activation's PATH
+          # ever growing an `awk` again.
+          ${pkgs.gawk}/bin/awk -v b=${lib.escapeShellArg beginMarker} -v e=${lib.escapeShellArg endMarker} '
             $0==b {skip=1; next}
             $0==e {skip=0; next}
             !skip {print}
           ' "$TASKRC" > "$TASKRC.dots-tmp" && mv "$TASKRC.dots-tmp" "$TASKRC"
         fi
         ${lib.optionalString syncConfigured ''
-        cat >> "$TASKRC" <<'TASKRC_EOF'
+        cat >> "$TASKRC" <<TASKRC_EOF
 ${beginMarker}
 sync.server.url=${effectiveUrl}
+sync.server.client_id=${ts.clientId}
 sync.encryption_secret=${ts.credential}
 ${endMarker}
 TASKRC_EOF
@@ -113,3 +147,4 @@ TASKRC_EOF
     '';
   };
 }
+
