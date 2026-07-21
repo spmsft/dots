@@ -83,6 +83,22 @@
       #   };
       # };
 
+      # Taskwarrior/TaskChampion sync - off by default (no sync.server.url/
+      # sync.encryption_secret are ever written to ~/.taskrc unless BOTH a
+      # server URL - explicit `url`, or implied by `autoSpawnServer` - AND
+      # `credential` are set; see `dots-local-options` for full details of
+      # each field). A random credential was pre-generated below by
+      # setup.sh so you don't need to invent a secure secret by hand the
+      # moment you decide to turn this on - every device syncing to the
+      # same server must share this exact value.
+      # taskSync = {
+      #   autoSpawnServer = true;   # run taskchampion-sync-server locally via systemd --user
+      #   interface = "127.0.0.1"; # or "0.0.0.0" to accept connections from other machines
+      #   port = 8080;
+      #   credential = "@@TASK_SYNC_CREDENTIAL@@";
+      #   syncInterval = "never";  # e.g. "15m"/"1h", or "never" to only sync manually
+      # };
+
       # Sync configuration - track handcrafted configs that survive nix
       # rebuilds. Named syncables (defined once in dots's
       # modules/core/syncables.nix, not copy-pasted per machine) are

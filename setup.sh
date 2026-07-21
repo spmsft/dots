@@ -59,6 +59,7 @@ if [ ! -d "$DOTS_LOCAL" ]; then
     fi
 
     mkdir -p "$DOTS_LOCAL"
+    chmod 700 "$DOTS_LOCAL"
     cd "$DOTS_LOCAL"
     git init
 
@@ -73,6 +74,17 @@ if [ ! -d "$DOTS_LOCAL" ]; then
     cp "$TEMPLATE_DIR/flake.nix" flake.nix
     cp "$TEMPLATE_DIR/host.nix" host.nix
 
+    # Pre-generate a random Taskwarrior sync credential (dotsLocal.taskSync.
+    # credential - see modules/local/schema.nix) into the template's
+    # commented-out example, so a user turning on task sync later doesn't
+    # have to invent a secure secret by hand. Harmless if never used - the
+    # taskSync block stays commented out until explicitly enabled.
+    if command -v openssl >/dev/null 2>&1; then
+        TASK_SYNC_CREDENTIAL=$(openssl rand -hex 32)
+    else
+        TASK_SYNC_CREDENTIAL=$(head -c32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    fi
+
     sed -i \
         -e "s|@@SYSTEM@@|${SYSTEM}|g" \
         -e "s|@@BARCH@@|${BARCH}|g" \
@@ -84,6 +96,7 @@ if [ ! -d "$DOTS_LOCAL" ]; then
         -e "s|@@GID@@|$(id -g)|g" \
         -e "s|@@HOMEDIR@@|${HOME}|g" \
         -e "s|@@CONTEXT@@|${CONTEXT}|g" \
+        -e "s|@@TASK_SYNC_CREDENTIAL@@|${TASK_SYNC_CREDENTIAL}|g" \
         flake.nix
 
     git add flake.nix .gitignore appimages.nix host.nix
@@ -116,3 +129,6 @@ echo "4. Add AppImages to ~/dots-local/appimages.nix"
 echo "5. Put anything too bespoke to generalize (exact CUDA flags, one-off"
 echo "   packages, ...) in ~/dots-local/host.nix - already wired in via extraModules"
 echo "6. Run apply-dots to activate changes"
+echo "7. (Optional) Uncomment 'taskSync' in ~/dots-local/flake.nix to enable Taskwarrior"
+echo "   sync (auto-spawned server and/or a client hook into ~/.taskrc) - a random"
+echo "   sync credential was already pre-generated into that commented-out block"

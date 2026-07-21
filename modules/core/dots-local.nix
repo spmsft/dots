@@ -11,6 +11,22 @@ let
   hostOrEmpty = if dotsLocal.host != null then dotsLocal.host else "";
 in
 {
+  # dots-local can hold plaintext secrets (e.g. dotsLocal.taskSync.credential)
+  # in its flake.nix - there's no secrets-encryption layer in this repo, so
+  # the best available protection is restricting the directory to the
+  # owning user only. setup.sh already chmods it to 0700 at creation time;
+  # this re-asserts that on every activation too (e.g. after a `git clone`
+  # of dots-local, which wouldn't preserve that bit), so it's not a
+  # one-time-only guarantee. Harmless no-op if the directory doesn't exist
+  # yet (chmod's error is silenced) - dots-local is optional at
+  # first-checkout time on some flows.
+  home.activation.protectDotsLocalPerms = lib.hm.dag.entryBefore ["writeBoundary"] ''
+    DOTS_LOCAL_DIR="''${DOTS_LOCAL_DIR:-$HOME/dots-local}"
+    if [ -d "$DOTS_LOCAL_DIR" ]; then
+      chmod 700 "$DOTS_LOCAL_DIR" || true
+    fi
+  '';
+
   # Pretty print dots-local configuration on activation
   home.activation.printDotsLocalInfo = lib.hm.dag.entryBefore ["writeBoundary"] ''
     DOTS_DIR="''${DOTS_DIR:-$HOME/dots}"

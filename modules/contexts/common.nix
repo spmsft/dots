@@ -6,6 +6,7 @@
     ../features/network.nix
     ../features/appimages.nix
     ../features/vk.nix
+    ../features/task-sync.nix
 
     ../suites/network-tools.nix
     ../suites/git-tools.nix
@@ -27,5 +28,6 @@
     tasksh = true;
     timewarrior = true;
     lazytask = true;
+    taskwarrior-tui = true;
   };
 }

@@ -2226,3 +2226,58 @@ either y or n to the "Remove pandoc?" prompt is safe either way - the real
 existing `remove_packages` self-healing filter; after this fix lands via
 the next `apply-dots`, routine `update` runs will no longer need that
 manual step for future renames.
+
+### 2026-07-21 — Added taskwarrior-tui + Taskwarrior/TaskChampion sync tooling
+**Decision:** Added `taskwarrior-tui` as another opt-in `suites.pim-apps`
+companion toggle (alongside `tasksh`/`timewarrior`/`lazytask`), defaulted
+on in `modules/contexts/common.nix` alongside those three siblings. Added
+a new universally-imported (`modules/contexts/common.nix`) feature,
+`features.task-sync` (`modules/features/task-sync.nix`), providing:
+- The `taskchampion-sync-server` binary, always on `$PATH` when the
+  feature is enabled (default-on), mirroring `features.vk`'s "always
+  available" precedent.
+- An optional systemd `--user` service running that server locally
+  (`dotsLocal.taskSync.autoSpawnServer`), auto-started via
+  `WantedBy=default.target` (no shell-startup hook needed).
+- An optional systemd `--user` timer running `task sync`
+  (`dotsLocal.taskSync.syncInterval`, default `"never"` = no timer at
+  all - manual sync only).
+- A `home.activation` hook wiring `sync.server.url`/
+  `sync.encryption_secret` into `~/.taskrc` via a filter-then-append
+  model (strip any previously-written dots-managed block bracketed by
+  marker comments, then re-append a fresh one) - deliberately never
+  touches anything else in the file, and deliberately skips entirely if
+  `~/.taskrc` doesn't exist yet (so it can never pre-empt Taskwarrior's
+  own first-run auto-init of `data.location`/`news.version`).
+New `dotsLocal.taskSync` schema fields (`modules/local/schema.nix`):
+`autoSpawnServer` (bool), `interface`/`port` (server bind), `url`
+(client override; null defaults to `http://127.0.0.1:<port>` when this
+machine hosts its own server), `credential` (the actual
+`sync.encryption_secret` - the only field that must be shared,
+byte-identical, across every syncing device), `syncInterval`.
+**Secret handling:** `credential` is stored in plaintext in dots-local's
+`flake.nix` (same tradeoff as `butterfishApiKey` - no secrets-encryption
+layer exists in this repo). Mitigations: `setup.sh` now `chmod 700`s a
+freshly-created dots-local directory immediately, and
+`modules/core/dots-local.nix` now re-asserts `chmod 700` on every
+activation (`home.activation.protectDotsLocalPerms`) so the permission
+isn't a one-time-only guarantee (e.g. survives a fresh `git clone` of
+dots-local, which wouldn't otherwise preserve that bit). `setup.sh` also
+pre-generates a random credential (`openssl rand -hex 32`, with an
+`/dev/urandom`+`od` fallback) into the template's commented-out
+`taskSync` example, so turning sync on later doesn't require inventing a
+secure secret by hand.
+**Updated:** `templates/local/flake.nix` (commented-out `taskSync`
+example block + `@@TASK_SYNC_CREDENTIAL@@` token) and `setup.sh`'s
+"Next steps" output, per the standing schema.nix/template-drift rule.
+**This machine (lub):** enabled for real per explicit user choice -
+`autoSpawnServer = true`, `interface = "127.0.0.1"` (loopback-only, not
+yet exposed to other machines), `port = 8080`, `syncInterval = "never"`
+(manual `task sync` only), with a freshly-generated real credential.
+**Validated:** `nix flake check` + full `activationPackage` build both
+pass. Ran `apply-dots` for real on lub: `taskchampion-sync-server.service`
+came up active/enabled via systemd --user, `curl 127.0.0.1:8080` returns
+200, `~/.taskrc`'s pre-existing `urgency.user.*` lines were preserved
+untouched with the new sync block cleanly appended below them, re-running
+the filter+append snippet standalone twice in isolation confirmed it's
+idempotent (no duplicate blocks), and `dots-local` is now `chmod 700`.

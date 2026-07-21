@@ -19,6 +19,7 @@ let
       taskwarrior = { enable = cfg.taskwarrior; pkg = pkgs.taskwarrior3; };
       tasksh = { enable = cfg.tasksh; pkg = pkgs.tasksh; };
       timewarrior = { enable = cfg.timewarrior; pkg = pkgs.timewarrior; };
+      taskwarrior-tui = { enable = cfg.taskwarrior-tui; pkg = pkgs.taskwarrior-tui; };
       superproductivity = { enable = cfg.superproductivity; pkg = pkgs.superproductivity; };
     };
   };
@@ -40,6 +41,11 @@ in {
     tasksh = coreLib.mkDefaultDisabledOption "tasksh (taskshell) - interactive Taskwarrior REPL";
 
     timewarrior = coreLib.mkDefaultDisabledOption "Timewarrior - command line time tracker (Taskwarrior companion)";
+
+    # taskwarrior-tui (github.com/kdheepak/taskwarrior-tui) - a full-screen
+    # TUI dashboard for Taskwarrior (task list/filter/edit/context views),
+    # distinct from tasksh's REPL-style interactive shell above.
+    taskwarrior-tui = coreLib.mkDefaultDisabledOption "taskwarrior-tui - full-screen TUI dashboard for Taskwarrior";
 
     # lazytask (github.com/OsamaMahmood/lazytask) - a standalone lazygit-
     # style TUI for TaskChampion/Taskwarrior-compatible storage. Not in

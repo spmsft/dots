@@ -422,6 +422,101 @@ in {
       };
     };
 
+    # --- Taskwarrior / TaskChampion sync ---
+    taskSync = mkOption {
+      default = { };
+      description = ''
+        Taskwarrior/TaskChampion sync configuration, consumed by
+        modules/features/task-sync.nix. Entirely inert by default: no
+        `~/.taskrc` sync block is ever written unless BOTH a server URL
+        (explicit `url`, or implied by `autoSpawnServer`) AND `credential`
+        are set - see each field's own description below.
+      '';
+      type = types.submodule {
+        options = {
+          autoSpawnServer = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Whether to run a local `taskchampion-sync-server` on this
+              machine as a systemd user service (auto-started via
+              `default.target`, so it comes up automatically on login -
+              no shell-startup hook needed). When true and `url` is left
+              null, the client-side `sync.server.url` written to
+              `~/.taskrc` defaults to `http://127.0.0.1:<port>`
+              (loopback, since the client and server are the same
+              machine here) regardless of `interface`.
+            '';
+          };
+
+          interface = mkOption {
+            type = types.str;
+            default = "127.0.0.1";
+            description = ''
+              Bind address for the auto-spawned `taskchampion-sync-server`
+              (only meaningful when `autoSpawnServer` is true). Leave at
+              the loopback default for a single-machine setup; set to
+              "0.0.0.0" (or a specific interface address) to accept sync
+              connections from other machines on the network.
+            '';
+          };
+
+          port = mkOption {
+            type = types.port;
+            default = 8080;
+            description = ''
+              Port for the auto-spawned `taskchampion-sync-server`, and
+              the port assumed by the computed default `url` (see
+              `autoSpawnServer`'s description) when `url` is left null.
+            '';
+          };
+
+          url = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = ''
+              Taskwarrior's `sync.server.url`. Null means "compute a
+              default from `autoSpawnServer`/`port` if this machine hosts
+              its own server, else leave sync unconfigured" - set this
+              explicitly to point at a server running on a *different*
+              machine (e.g. `"http://otherhost:8080"`).
+            '';
+          };
+
+          credential = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = ''
+              Shared Taskwarrior `sync.encryption_secret` - the actual
+              end-to-end encryption credential. Must be byte-identical on
+              every device syncing against the same server. Null (the
+              default) means no `~/.taskrc` sync block is written at all,
+              even if `url`/`autoSpawnServer` are set. Stored in plaintext
+              here (same tradeoff as `butterfishApiKey` above - this repo
+              has no secrets-encryption layer) - `setup.sh` pre-generates
+              a random value into the template's commented-out example so
+              you don't have to invent a secure secret by hand, and both
+              `setup.sh` and `modules/core/dots-local.nix` keep this
+              directory's permissions at 0700 to at least limit plaintext
+              exposure to other local users on the same machine.
+            '';
+          };
+
+          syncInterval = mkOption {
+            type = types.str;
+            default = "never";
+            description = ''
+              How often to run `task sync` automatically via a systemd
+              user timer, as a systemd time span (e.g. "15m", "1h"), or
+              the literal string "never" (the default) to install no
+              timer at all - `task sync` can always still be run
+              manually regardless of this setting.
+            '';
+          };
+        };
+      };
+    };
+
     # --- Sync ---
     sync = mkOption {
       default = { };
