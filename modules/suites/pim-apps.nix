@@ -15,31 +15,40 @@ let
     else null;
   syncConfigured = ts.credential != null && effectiveUrl != null;
 
-  # lazytask (v0.1.0, pinned in pkgs/lazytask.nix) has no way to load
-  # sync settings from its own config.toml, nor via CLI flags/env vars -
-  # see its src/config.rs (only theme/keybindings/
-  # taskwarrior{taskrc_path,data_location,sync_enabled}/ui fields exist,
-  # no server/credential fields at all) and its README's explicit "Sync
-  # settings are currently held in memory only and not persisted across
-  # launches" caveat (entered by hand each session via the Shift+S sync
-  # config modal). So "hooking" dotsLocal.taskSync's server config into
-  # lazytask can't be a real config-file wire-up (there's nothing in its
-  # schema to write to yet) - the best available integration today is a
-  # launcher wrapper that prints the values to copy into that modal, so
-  # the user doesn't have to remember/look them up separately. Revisit
-  # this once/if lazytask persists sync config itself.
+  # lazytask (v0.1.0, pinned in pkgs/lazytask.nix) has no native way to
+  # load sync settings from its own config.toml, CLI flags, or env vars
+  # at startup - confirmed by full source read (src/config.rs's
+  # TaskwarriorConfig fields are dead/unused; TaskChampionIntegration::new
+  # hardcodes sync_settings: None always; the only place sync gets
+  # configured is the interactive Shift+S modal calling
+  # TaskChampionIntegration::configure_sync()). Rather than just printing
+  # the values for manual copy-paste every session, we vendor a small
+  # patch (pkgs/patches/lazytask-env-sync.patch, applied in
+  # pkgs/lazytask.nix) that makes App::new() call that same
+  # configure_sync() automatically, opt-in, when three env vars are all
+  # present: LAZYTASK_SYNC_SERVER_URL, LAZYTASK_SYNC_CLIENT_ID,
+  # LAZYTASK_SYNC_ENCRYPTION_SECRET. See memory-bank/decisions.md for the
+  # full investigation trail and rationale.
+  #
+  # lazytask keeps its own standalone TaskChampion replica, separate from
+  # Taskwarrior CLI's ~/.task data, so it needs its own device client_id
+  # (must parse as a UUID) - distinct from sync.server.client_id in
+  # ~/.taskrc. We generate one on first use and persist it so it's
+  # stable across launches (important for the sync server's per-device
+  # snapshot/versioning), rather than regenerating a fresh one every run.
   lazytaskPkg =
     if syncConfigured then
       pkgs.writeShellScriptBin "lazytask" ''
         #!/usr/bin/env bash
-        cat <<SYNCINFO
-        Task sync is configured (dotsLocal.taskSync) - paste these into
-        lazytask's Shift+S sync config modal (it doesn't persist sync
-        settings across launches yet, so this is needed every session):
-          Server URL:        ${effectiveUrl}
-          Encryption Secret: ${ts.credential}
-
-        SYNCINFO
+        set -euo pipefail
+        client_id_file="$HOME/.local/share/lazytask/client_id"
+        mkdir -p "$(dirname "$client_id_file")"
+        if [ ! -s "$client_id_file" ]; then
+          cat /proc/sys/kernel/random/uuid > "$client_id_file"
+        fi
+        export LAZYTASK_SYNC_SERVER_URL=${lib.escapeShellArg effectiveUrl}
+        export LAZYTASK_SYNC_CLIENT_ID="$(cat "$client_id_file")"
+        export LAZYTASK_SYNC_ENCRYPTION_SECRET=${lib.escapeShellArg ts.credential}
         exec ${pkgs.external.lazytask}/bin/lazytask "$@"
       ''
     else pkgs.external.lazytask;

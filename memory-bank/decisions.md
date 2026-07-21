@@ -2308,3 +2308,54 @@ revisit if/when lazytask itself adds persistent sync-config storage.
 confirmed via a real `apply-dots` run on lub that the systemd unit now
 binds `127.0.0.1:9999` (server responds 200 there) and that `lazytask`
 on `$PATH` now prints the correct URL/credential before launching.
+
+### 2026-07-21 — Vendored a real env-var sync-config patch into lazytask
+**Decision:** Superseded the "print info for manual copy-paste" lazytask
+wrapper from the entry above with a genuine automatic wire-up, by
+vendoring a small unified diff patch into the `lazytask` v0.1.0 source
+itself (`pkgs/patches/lazytask-env-sync.patch`, applied via `patches =`
+in `pkgs/lazytask.nix` - first use of a vendored source patch in this
+repo, hence the new `pkgs/patches/` directory).
+**Why a patch was necessary:** Confirmed via a full read of the real
+upstream source (cloned directly, not guessed) that lazytask v0.1.0 has
+zero persistent/automatic sync-config path: `TaskChampionIntegration::new`
+hardcodes `sync_settings: None` on every startup regardless of
+`config.toml`; `config.toml`'s `TaskwarriorConfig` fields are dead/
+unused; the `LAZYTASK_REMOTE_SYNC_URL`/`_CLIENT_ID` env vars the user
+spotted in the project's own test-running instructions are read only by
+`tests/integration_remote_sync.rs`, compiled solely into `cargo test`,
+never into the shipped binary. The only real code path that configures
+sync is `TaskChampionIntegration::configure_sync(SyncSettings{..})`,
+called exclusively from the interactive Shift+S modal.
+**Patch content:** ~15 lines in `src/app.rs`'s `App::new()` - imports
+`SyncSettings`, then if `LAZYTASK_SYNC_SERVER_URL`,
+`LAZYTASK_SYNC_CLIENT_ID`, and `LAZYTASK_SYNC_ENCRYPTION_SECRET` are ALL
+present, calls the same unmodified `configure_sync()` the modal itself
+calls. Silently a no-op if any var is missing or if `configure_sync`
+rejects the values (e.g. a non-UUID client id) - never panics, never
+logs the secret.
+**Wrapper update:** `modules/suites/pim-apps.nix`'s `lazytaskPkg` now
+exports those three env vars for real before `exec`-ing the patched
+binary, rather than just printing them. Since lazytask keeps its own
+standalone TaskChampion replica (separate from Taskwarrior CLI's
+`~/.task`), it needs its own device client-id distinct from
+`sync.server.client_id` in `~/.taskrc` - the wrapper generates one via
+`/proc/sys/kernel/random/uuid` on first run and persists it at
+`~/.local/share/lazytask/client_id`, reusing it on subsequent launches
+(a fresh UUID every run would break the server's per-device snapshot/
+versioning). Caught and fixed a bug during testing: the client-id path
+must NOT be run through `lib.escapeShellArg` at the Nix level, since that
+produces a literal single-quoted `$HOME` that bash then never expands -
+the `$HOME`-containing path is written directly into the heredoc instead
+and left to expand at shell runtime.
+**Validation method:** Cloned the real `v0.1.0` tag independently twice
+(once to build the patch via `git diff`, once fresh to verify
+`patch -p1` applies cleanly), then validated for real in this repo: (1)
+`nix build` of the patched `lazytask` derivation compiles successfully,
+(2) full `activationPackage` build and `nix flake check` both pass, (3)
+a real `apply-dots` run on lub activates cleanly, (4) inspected the
+generated wrapper script on `$PATH` and confirmed correct env var values
+and runtime `$HOME` expansion, (5) ran the actual patched binary under a
+pty (`script -qec "timeout 3 lazytask" ...`) and confirmed it starts
+without panicking/erroring and persists a stable client-id file across
+runs.
