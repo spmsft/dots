@@ -7,6 +7,7 @@
     ../features/appimages.nix
     ../features/vk.nix
     ../features/task-sync.nix
+    ../features/rescue-lua.nix
 
     ../suites/network-tools.nix
     ../suites/git-tools.nix

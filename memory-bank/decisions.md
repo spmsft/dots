@@ -2466,3 +2466,54 @@ choice) - no dots-local edit needed since those already match.
 luajit-no-lua-symlink wrapper confirming only `bin/luajit` exists and
 runs correctly, and a real `apply-dots` on lub confirming `lua` is on
 PATH (5.4.7) and `luajit` is correctly absent (default off).
+
+### 2026-07-21 — New `features.rescue-lua`: static-musl Lua/LuaJIT emergency toolkit (ported from a Gemini outline, with two forced deviations)
+
+User supplied a Gemini-generated outline for a `rescue-lua` command:
+`pkgsStatic.lua5_4`/`pkgsStatic.luajit`, both bundled with the same
+`luafilesystem`/`luaposix`/`dkjson` libraries via `.withPackages`, a
+wrapper switching engines on `-jit`/`--jit`, plus static `busybox`/`jq`
+and direct top-level access to every raw binary. Implemented it, but
+real build/collision testing forced two deviations from the outline:
+
+1. **`.withPackages` is broken for `pkgsStatic` in current nixpkgs.**
+   Confirmed by building `pkgsStatic.lua5_4.withPackages (ps: [
+   ps.luafilesystem ])` in isolation: it fails during
+   `luarocks_bootstrap`'s own `./configure` with "Unknown flag:
+   --enable-static" - the static stdenv adapter unconditionally injects
+   `--enable-static --disable-shared` into every autotools-style
+   configure call, but luarocks' custom configure script doesn't
+   recognize that flag. This is upstream, not fixable from this repo
+   without a real nixpkgs/luarocks patch. Given user's explicit choice
+   (asked directly rather than guessing), shipped WITHOUT bundled Lua
+   libraries - bare `pkgsStatic.lua5_4`/`pkgsStatic.luajit` build and
+   run fine on their own, just without `require("lfs")`/`dkjson`/etc.
+2. **Raw static binaries are NOT installed directly, unlike the
+   outline's "direct access to individual static binaries" section.**
+   `pkgsStatic.lua5_4` and `pkgsStatic.luajit` both ship a `bin/lua`
+   (luajit's is a self-symlink) - installing both raw would collide
+   with each other AND with the ordinary dynamically-linked `lua` from
+   `suites.dev-tools.lua` (on by default - see this file's earlier
+   2026-07-21 dev-tools entry). `pkgsStatic.busybox` ships ~400 applet
+   symlinks (ls/cat/grep/awk/sh/...) that would catastrophically
+   collide with coreutils/findutils/gnugrep/gawk already installed
+   everywhere; `pkgsStatic.jq`'s `bin/jq` would collide with the
+   ordinary `pkgs.jq` already installed unconditionally in
+   `modules/core/default.nix`. Fix: only install the `rescue-lua`
+   wrapper (reaches both static interpreters via absolute store paths,
+   no PATH involved) plus distinctly-renamed `rescue-busybox` (exposes
+   busybox's own multi-call binary only - invoke applets as
+   `rescue-busybox <applet> ...`) and `rescue-jq` wrappers.
+
+New `features.rescue-lua` (default-enabled, imported in
+`modules/contexts/common.nix`), with a `emergencyUtils` sub-toggle
+(default-enabled) gating the busybox/jq wrappers separately from the
+Lua wrapper itself. `rlua`/`rluajit` bash aliases added for
+`rescue-lua`/`rescue-lua --jit`.
+**Validation:** full `activationPackage` build (no collisions), a real
+`apply-dots` on lub, then ran `rescue-lua -e 'print(_VERSION)'` (→ "Lua
+5.4"), `rescue-lua --jit -e 'print(_VERSION)'` (→ "Lua 5.1"),
+`rescue-busybox echo ...`, `rescue-jq -n '{"a":1}'`, and confirmed via
+`bash -ic 'alias rlua; alias rluajit'` that both aliases register
+correctly, all while `suites.dev-tools`'s ordinary `lua` stayed intact
+on PATH with no collision.
