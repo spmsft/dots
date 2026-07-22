@@ -52,6 +52,18 @@ in
   home.file.".profile-dots" = {
     text = ''
       if [ -z "''${NIXON+x}" ]; then export NIXON=${nixonDefaultStr}; fi
+      # Same HOME/USER backfill as in .bashrc-dots (see the comment
+      # there for the full rationale) - duplicated here because, on a
+      # machine with `nixonDefault = true`, .profile-nix (which sources
+      # the store-packaged nix.sh, guarded on both being non-empty) runs
+      # BEFORE .bashrc-dots ever gets a chance to backfill them, on the
+      # very first login shell of a session.
+      if [ -z "''${HOME:-}" ]; then
+        export HOME="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
+      fi
+      if [ -z "''${USER:-}" ]; then
+        export USER="$(id -un 2>/dev/null)"
+      fi
       if [ "$NIXON" = "1" ]; then [[ -f ~/.profile-nix ]] && . ~/.profile-nix; fi
       [[ -f ~/.bashrc-dots ]] && . ~/.bashrc-dots
     '';

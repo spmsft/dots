@@ -749,3 +749,17 @@ the failure is invisible except as a missing `~/.nix-profile/bin` on
 `id -un` near the very top of `.bashrc-dots`, before anything else runs,
 so every subsequent `nixon`/`nixoff` toggle in that shell always has a
 real value to capture and hand off.
+
+## HOME/USER backfill needed in BOTH .profile-dots and .bashrc-dots
+
+Follow-up to the entry above: `.profile-dots` sources `.profile-nix`
+(nix.sh) BEFORE `.bashrc-dots` ever runs, so the HOME/USER backfill
+living only in `.bashrc-dots` still leaves a gap on a machine with
+`dotsLocal.nixonDefault = true` - its very first login shell of a
+session could hit the exact same silent nix.sh no-op if HOME/USER
+happen to be unset at that point, since nothing backfills them before
+.profile-nix sources. Duplicated the same backfill at the top of
+`.profile-dots`, before the `.profile-nix` sourcing line. Verified via
+`env -i NIXON=1 bash -l` (simulating a nixonDefault=true machine's very
+first shell with HOME/USER unset): NIX_PROFILES and
+`~/.nix-profile/bin` now resolve correctly.
