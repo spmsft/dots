@@ -34,6 +34,28 @@ if [ -z "$CONTEXT" ]; then
     exit 1
 fi
 
+# `install.sh` installs Nix with `--no-modify-profile` (matching this
+# repo's own nixon/nixoff design, which manages nix-loading itself
+# rather than relying on the installer's shell integration - see
+# memory-bank/decisions.md's 2026-07-22 nixon/nixoff entry) - so a
+# genuinely fresh terminal right after installing Nix has NO
+# `/etc/profile.d/nix.sh`/`~/.bash_profile` hook to put `nix` on PATH,
+# and this script's own `nix run home-manager -- switch` below would
+# otherwise fail with a plain "nix: command not found". Fall back to
+# the well-known daemon-install bin dir directly, for THIS script's
+# duration only - `apply-dots`/`nixon` take over PATH management for
+# every later shell once the initial Home Manager switch has run.
+if ! command -v nix >/dev/null 2>&1; then
+    if [ -x /nix/var/nix/profiles/default/bin/nix ]; then
+        export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+    else
+        echo "ERROR: 'nix' not found on PATH, and /nix/var/nix/profiles/default/bin/nix doesn't exist either." >&2
+        echo "Install Nix first - see install.sh (uses the Determinate Systems installer" >&2
+        echo "with --no-modify-profile) - then re-run ./setup.sh." >&2
+        exit 1
+    fi
+fi
+
 DOTS_LOCAL="$HOME/dots-local"
 TEMPLATE_DIR="$DOTS_DIR/templates/local"
 

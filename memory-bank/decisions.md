@@ -2881,3 +2881,37 @@ var survives, `HOME` genuinely empty as intended), default `-`/
 `VAR=value` (both allowlist defaults and the explicit assign present),
 `+`/command-passthrough (`nixon + echo ...` runs and exits normally),
 and `--help` text.
+
+## 2026-07-22: setup.sh works with a --no-modify-profile Nix install
+
+Follow-on to the nixon/nixoff redesign above. Added `install.sh` (a
+2-line wrapper around the Determinate Systems installer with
+`--no-modify-profile`) as the recommended way to install Nix on a new
+machine, matching the "nixon/nixoff manages nix-loading itself" design -
+no system profile.d/bashrc hooks are created at all with this install
+mode (nothing to conflict with or duplicate what nixon/nixoff already
+does).
+
+This means a genuinely fresh terminal right after installing Nix this
+way has `nix` nowhere on `PATH` - `setup.sh`'s own `nix run
+home-manager -- switch ...` call would otherwise fail immediately with
+"nix: command not found". Fixed by adding a small PATH-bootstrap
+fallback near the top of `setup.sh` (after context-arg validation, before
+`dots-local` template setup): if `command -v nix` fails, fall back to
+prepending the well-known daemon-install location
+(`/nix/var/nix/profiles/default/bin`) to `PATH` for the remainder of the
+script's own run only; error out clearly if that binary doesn't exist
+either (told to run `install.sh` first). This fallback is scoped to
+`setup.sh`'s own process - it doesn't touch any shell rc file - since
+`apply-dots`/`nixon` take over PATH management for every later shell
+once the initial Home Manager switch has completed.
+
+Confirmed system-wide Nix flakes/`nix-command` experimental features are
+enabled unconditionally by the Determinate installer via
+`/etc/nix/nix.conf`'s `extra-experimental-features` line regardless of
+`--no-modify-profile`, so `nix run` itself works fine once `nix` is
+found on `PATH` - no separate flakes-enablement fix was needed.
+
+Added a short "Prerequisite" step to `README.md`'s Quick Start pointing
+at `install.sh`, and a shebang + explanatory comment to `install.sh`
+itself (previously a bare 2-line file with no `#!` line).

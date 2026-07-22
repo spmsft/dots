@@ -13,6 +13,13 @@ A declarative, reproducible home setup for Linux workstations with per-machine o
 ## Quick Start
 
 ```bash
+# 0. Prerequisite: install Nix, if not already present (see install.sh -
+#    uses the Determinate Systems installer with --no-modify-profile,
+#    matching this repo's own nixon/nixoff design; no shell profile
+#    edits needed - setup.sh finds `nix` on its own even on a brand-new
+#    terminal right after this)
+./install.sh
+
 # First time setup
 ./setup.sh --list  # List available contexts (priv/work)
 ./setup.sh priv    # Creates ~/dots-local with your identity
