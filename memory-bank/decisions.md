@@ -2944,3 +2944,54 @@ a `$PATH`/`home.packages` entry, so it can't shadow anything.
 `--override-input dots-local`), plus a targeted `nix eval` with a
 throwaway `dots-local` override (`distro = "azurelinux3"`) confirming
 zero `git-2.*`-named derivations remain in `home.packages`.
+
+### 2026-07-22 — starship init could run before `~/.nix-profile/bin` was on PATH
+
+`programs.bash.initExtra` (modules/core/default.nix) - which sets
+`STARSHIP_CONFIG` and calls `eval "$(starship init bash)"` - is emitted
+into the generated `.bashrc-nix` BEFORE Home Manager's own trailing
+`nix.sh`/`hm-session-vars.sh` sourcing lines (confirmed live: `grep -n
+"starship\|nix.sh" ~/.bashrc-nix` showed `eval "$(starship init bash)"`
+at line 189, `. .../nix.sh` at line 194). Since `starship` (a
+`home.packages` entry) only lives in `~/.nix-profile/bin`, and that
+directory is normally only added to `$PATH` by `nix.sh` - itself only
+guaranteed to have already run via `.profile-nix` in a LOGIN shell (see
+this file's earlier nixon/nixoff entries) - any interactive NON-login
+shell that reaches `.bashrc-nix` without `~/.nix-profile/bin` already on
+`$PATH` from an inherited/prior source would silently fail to find
+`starship` at the point `initExtra` calls it.
+
+Fixed by prepending `$HOME/.nix-profile/bin` onto `$PATH` (idempotent,
+guarded) at the very top of `initExtra`, before referencing `starship`
+at all - `.bashrc-nix`'s own later `nix.sh`/`hm-session-vars.sh` lines
+just re-add the same, already-present entry (matching the existing,
+documented double-nix.sh-sourcing quirk).
+
+**Validation:** full `activationPackage` build + `apply-dots`, then
+`env -i HOME=... USER=... PATH=/usr/bin:/bin bash -i -c 'source
+~/.bashrc-nix; command -v starship'` (simulating the exact failure
+scenario - a bare, nix-free PATH) - `starship` now correctly resolves
+to `~/.nix-profile/bin/starship`.
+
+### 2026-07-22 — `setup.sh` now requires `<distro> <context>` (was `<context>` only, distro hardcoded)
+
+`setup.sh` previously hardcoded `DISTRO="cachyos"` unconditionally,
+regardless of which machine it was actually bootstrapping - every new
+machine's `dots-local/flake.nix` got `distro = "cachyos"` baked in from
+the template fill-in step no matter its real distro, silently wrong for
+any non-CachyOS host (Azure Linux included) until manually corrected
+after the fact.
+
+Made `setup.sh` take two positional args - `./setup.sh <distro>
+<context>` (was `./setup.sh <context>`) - validated against a
+`VALID_DISTROS` list kept in sync with `modules/local/schema.nix`'s
+`distro` option description (`cachyos opensuse azurelinux3 azurelinux4
+debian`). `--list`/`-l`/`list` (with no further args) now prints both
+available distros and contexts; missing either argument or an unknown
+distro value prints usage + the valid list and exits 1, same pattern as
+the existing context handling. Updated `README.md`'s Quick Start example
+and troubleshooting note to the new two-arg form.
+
+**Validation:** `bash -n setup.sh`, plus live runs of every argument
+path (no args, `--list`, distro-only, invalid distro) confirming correct
+usage/list/error output and exit codes.

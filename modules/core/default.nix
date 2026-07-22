@@ -119,6 +119,20 @@ home.packages = with pkgs; [
     historyControl = [ "ignoredups" "ignorespace" ];
 
     initExtra = ''
+      # Home Manager sources ~/.nix-profile/etc/profile.d/{nix.sh,
+      # hm-session-vars.sh} itself (confirmed live in the generated
+      # .bashrc-nix), but only AFTER this initExtra block's own content -
+      # so `starship` (installed via home.packages, living only in
+      # ~/.nix-profile/bin) isn't guaranteed to be on $PATH yet here.
+      # Prepend it ourselves first - idempotent, so .bashrc-nix's own
+      # later sourcing just re-adds the same already-present entry
+      # (matching the existing, documented double-nix.sh-sourcing quirk
+      # elsewhere - see modules/core/nixon.nix).
+      case ":$PATH:" in
+        *":$HOME/.nix-profile/bin:"*) ;;
+        *) export PATH="$HOME/.nix-profile/bin:$PATH" ;;
+      esac
+
       if [[ "$TERM" == "linux" ]]; then
         export STARSHIP_CONFIG=~/.config/starship_minimal.toml
       else

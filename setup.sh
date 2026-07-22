@@ -6,6 +6,10 @@ set -e
 DOTS_DIR="${DOTS_DIR:-$(cd "$(dirname "$0")" && pwd)}"
 CONTEXTS_DIR="$DOTS_DIR/modules/contexts"
 
+# Keep in sync with modules/local/schema.nix's `distro` option description -
+# every value there that has a real alien-package backend.
+VALID_DISTROS="cachyos opensuse azurelinux3 azurelinux4 debian"
+
 # List every available context - a real, existing modules/contexts/<name>.nix
 # file, `common.nix` excluded since it's the always-imported baseline, not
 # something to pick standalone.
@@ -18,21 +22,42 @@ list_contexts() {
     done
 }
 
-CONTEXT=$1
+list_distros() {
+    echo "Available distros:"
+    for d in $VALID_DISTROS; do
+        echo "  - $d"
+    done
+}
 
-if [ "$CONTEXT" = "-l" ] || [ "$CONTEXT" = "--list" ] || [ "$CONTEXT" = "list" ]; then
+DISTRO=$1
+CONTEXT=$2
+
+if [ "$DISTRO" = "-l" ] || [ "$DISTRO" = "--list" ] || [ "$DISTRO" = "list" ]; then
+    list_distros
     list_contexts
     exit 0
 fi
 
-if [ -z "$CONTEXT" ]; then
-    echo "Usage: ./setup.sh <context>"
-    echo "       ./setup.sh --list    # show available contexts"
-    echo "Example: ./setup.sh work"
+if [ -z "$DISTRO" ] || [ -z "$CONTEXT" ]; then
+    echo "Usage: ./setup.sh <distro> <context>"
+    echo "       ./setup.sh --list    # show available distros and contexts"
+    echo "Example: ./setup.sh cachyos work"
+    echo ""
+    list_distros
     echo ""
     list_contexts
     exit 1
 fi
+
+case " $VALID_DISTROS " in
+    *" $DISTRO "*) ;;
+    *)
+        echo "ERROR: unknown distro '$DISTRO'." >&2
+        echo "" >&2
+        list_distros >&2
+        exit 1
+        ;;
+esac
 
 # `install.sh` installs Nix with `--no-modify-profile` (matching this
 # repo's own nixon/nixoff design, which manages nix-loading itself
@@ -64,11 +89,7 @@ HOSTNAME="$HOSTNAME"
 SYSTEM="x86_64-linux"
 MARCH="native"
 BARCH="x86_64-v3"
-DISTRO="cachyos"
-# Supported distro values: cachyos | opensuse | azurelinux3 | azurelinux4 | debian
-# (selects the alien-package backend - see `dots-local-options distro`,
-# or modules/local/schema.nix's `distro` option description directly,
-# for the full list)
+# DISTRO comes from $1 (validated against $VALID_DISTROS above).
 
 # 1. Create dots-local if it doesn't exist
 if [ ! -d "$DOTS_LOCAL" ]; then

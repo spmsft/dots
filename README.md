@@ -21,8 +21,8 @@ A declarative, reproducible home setup for Linux workstations with per-machine o
 ./install.sh
 
 # First time setup
-./setup.sh --list  # List available contexts (priv/work)
-./setup.sh priv    # Creates ~/dots-local with your identity
+./setup.sh --list  # List available distros and contexts
+./setup.sh cachyos priv    # Creates ~/dots-local with your identity
 
 # Daily workflow
 apply-dots         # Apply your config (baseline, uses cache.nixos.org)
@@ -414,7 +414,7 @@ dots-sync -g  # Force regenerate from flake.nix
 ```
 
 **Context not found:**
-Ensure `dots-local/flake.nix` has a valid `context` attribute (e.g., `context = "priv";`). Run `./setup.sh --list` to see available contexts.
+Ensure `dots-local/flake.nix` has a valid `context` attribute (e.g., `context = "priv";`). Run `./setup.sh --list` to see available distros and contexts.
 
 **Nix evaluation errors:**
 ```bash
