@@ -2915,3 +2915,32 @@ found on `PATH` - no separate flakes-enablement fix was needed.
 Added a short "Prerequisite" step to `README.md`'s Quick Start pointing
 at `install.sh`, and a shebang + explanatory comment to `install.sh`
 itself (previously a bare 2-line file with no `#!` line).
+
+### 2026-07-22 — `vk.nix` was silently re-installing Nix's `git`, shadowing the Azure Linux alien fix
+
+Follow-up to the same day's "`git` alien-managed on Azure Linux"
+decision above. That fix made `suites.git-tools.nix`'s
+`programs.git.package` correctly evaluate to `null` on Azure Linux
+(confirmed via a throwaway `dots-local` override with
+`distro = "azurelinux3"`) - but `git` still resolved to
+`~/.nix-profile/bin/git` on a live Azure Linux host with `git` actually
+installed via `tdnf`. Root cause: `modules/features/vk.nix` had its own,
+completely independent `home.packages = [ vkScript pkgs.quarto pkgs.git
+];` - a hardcoded `pkgs.git` with zero alien-awareness, unrelated to
+`suites.git-tools`'s logic. Since `nix.sh` prepends `~/.nix-profile/bin`
+ahead of `/usr/bin` on `$PATH`, this Nix-built `git` always won
+regardless of `git-tools.nix`'s fix.
+
+Dropped `pkgs.git` from `vk.nix`'s `home.packages` entirely (per user:
+"drop from vk! This is our module, I always have git enabled so this
+will work.") - `suites.git-tools.git` is default-on and already the
+single source of truth for `git`'s alien-awareness, so `vk` doesn't need
+its own copy. Left `GIT_BIN="${pkgs.git}/bin/git"` (the script's
+internal absolute-store-path reference) untouched - that's a
+self-contained Nix-build-time reference the `vk` script alone uses, not
+a `$PATH`/`home.packages` entry, so it can't shadow anything.
+
+**Validation:** full `activationPackage` build (via
+`--override-input dots-local`), plus a targeted `nix eval` with a
+throwaway `dots-local` override (`distro = "azurelinux3"`) confirming
+zero `git-2.*`-named derivations remain in `home.packages`.
