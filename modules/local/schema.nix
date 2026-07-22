@@ -281,6 +281,29 @@ in {
       description = "Default value of $NIXON (1=nix-managed shell, 0=native host shell) on a fresh login.";
     };
 
+    nixonEnvAllowlist = mkOption {
+      type = types.listOf types.str;
+      default = [
+        "TERM" "HOME" "USER" "LOGNAME" "SHELL"
+        "LANG" "LANGUAGE" "LC_ALL" "LC_CTYPE"
+        "DISPLAY" "XAUTHORITY" "WAYLAND_DISPLAY"
+        "XDG_RUNTIME_DIR" "XDG_SESSION_TYPE" "XDG_SESSION_ID"
+        "DBUS_SESSION_BUS_ADDRESS"
+        "SSH_AUTH_SOCK" "SSH_CONNECTION" "SSH_CLIENT" "SSH_TTY"
+        "TMUX" "TMUX_PANE" "COLORTERM" "TERM_PROGRAM"
+        "WSL_DISTRO_NAME" "WSL_INTEROP" "WSLENV"
+        "PWD" "OLDPWD"
+      ];
+      description = ''
+        Environment variables that `nixon`/`nixoff` preserve when they
+        `exec -c` into a fresh login shell (which otherwise starts with a
+        genuinely empty environment - see modules/core/nixon.nix). This
+        is the default set; both `nixon` and `nixoff` also accept extra
+        variable names as arguments for one-off machine/session-specific
+        needs (e.g. `nixon MY_TOKEN`) without having to edit this list.
+      '';
+    };
+
     # --- Lua / LuaJIT (suites.dev-tools.lua/luajit) ---
     lua = mkOption {
       description = "Per-machine defaults for suites.dev-tools' Lua/LuaJIT toggles - see each field below.";

@@ -662,3 +662,41 @@ flags, simulating "just opened a new terminal"), not just via `bash -l`
 or the `nixon`/`nixoff` aliases themselves - the two code paths
 genuinely diverge, and the aliases' own use of `-l` makes it easy to
 accidentally only ever test the login-shell path.
+
+### 2026-07-22 — Testing pitfall: deeply-nested `bash -lc "..."` strings can silently pre-expand `$PATH` at the wrong level
+
+While diagnosing the `nixon`/`nixoff` PATH-leak bug (see `decisions.md`'s
+matching entry), an initial 3-level repro built as a single nested
+one-liner -
+`bash -lc 'NIXON=1 exec bash -lc "NIXON=0 exec bash -lc \"echo \$PATH\""'`
+- kept showing one leftover `~/.nix-profile/bin` entry even after both
+real bugs were fixed, while a 2-level version of the exact same
+transition came out clean. The apparent discrepancy was **not** a real
+bug: each layer of `\"`/`\$` escaping is consumed by the *next* shell
+out as it parses its own `-c` argument, so by the time the innermost
+`echo $PATH` substring reaches the *middle* shell, its `\$` has already
+been unescaped to a live, unescaped `$PATH` - which that middle shell
+(still `NIXON=1`, dirty PATH) greedily expands while merely constructing
+the argv for its own `exec`, long before the real innermost shell (the
+`NIXON=0` one) ever runs. The number of backslash levels needed is
+exactly `2^(depth-1)-ish` and easy to get subtly wrong, silently
+capturing a stale PATH instead of testing live behavior.
+**Fix/lesson**: never nest more than one level of `bash -c "..."`
+string-escaping to test multi-step `exec`/env-var chains - write each
+level as its own real script file (`exec bash -l /path/to/next.sh`) and
+have the *innermost* script itself do the `echo $PATH`/assertion. This
+eliminates all cross-level quoting ambiguity and was what finally
+produced a trustworthy repro (confirming both PATH-leak fixes actually
+work).
+
+
+**2026-07-22**: `.bashrc-nix` (Home Manager's generated interactive
+bashrc content) starts with `[[ $- == *i* ]] || return` - it does
+nothing at all in a non-interactive shell. This means `bash -l
+some_script.sh` (a login but non-interactive shell) never exercises it,
+even though it looks like a normal login-shell test. To reliably test
+`nixon`/`nixoff` behavior end-to-end, allocate a real pty via `script
+-qec "bash -l" logfile < commands.txt` and feed commands through stdin,
+then grep the logged output - this is the only way that's been
+confirmed to actually trigger `.bashrc-nix`'s content during testing in
+this environment.

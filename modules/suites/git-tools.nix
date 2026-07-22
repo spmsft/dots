@@ -62,10 +62,25 @@ in
 
   config = lib.mkIf cfg.enable {
     home.packages = appSet.packages;
-    alienPackages.enabledPackages = appSet.alienEnabled;
+    alienPackages.enabledPackages = appSet.alienEnabled
+      ++ lib.optional cfg.git "git";
 
+    # `git` itself is deliberately NOT routed through `appSet`/`mkAppSet`
+    # (unlike lazygit/gh/gh-dash above) - it needs real HM-level config
+    # below (`programs.git.settings`/`signing`/`alias`), so it must stay
+    # a `programs.git` block, not a plain package. `programs.git.package`
+    # (confirmed `nullOr package` via `nix eval .#homeConfigurations.
+    # default.options.programs.git.package.type.name`) is nullable
+    # exactly for this alien-managed case: home-manager only adds the
+    # package to `home.packages` when it's non-null, so on distros with a
+    # real `git` alien spec (Azure Linux 3/4 - see
+    # git-tools.azurelinux{3,4}-packages.nix) `alien.mkEntry` yields
+    # `null` here and native tdnf/dnf5 `git` is used instead, while the
+    # `programs.git` config (user.name/email, delta integration, etc.)
+    # still applies either way.
     programs.git = lib.mkIf cfg.git {
       enable = true;
+      package = alien.mkEntry cfg.git "git" pkgs.git;
       signing.format = null;
       settings = {
         user = {

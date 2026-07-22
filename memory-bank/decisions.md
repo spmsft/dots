@@ -2517,3 +2517,295 @@ Lua wrapper itself. `rlua`/`rluajit` bash aliases added for
 `bash -ic 'alias rlua; alias rluajit'` that both aliases register
 correctly, all while `suites.dev-tools`'s ordinary `lua` stayed intact
 on PATH with no collision.
+
+### 2026-07-22 — `git` alien-managed on Azure Linux (tdnf/dnf5)
+
+`suites.git-tools.nix` previously installed `git` purely via
+`programs.git.enable = true`'s default package, with zero alien
+awareness - unlike `lazygit`/`gh`/`gh-dash`/`gitCredentialManager`
+(already routed through `mkAppSet`). Confirmed via `nix eval
+.#homeConfigurations.default.options.programs.git.package.type.name` →
+`nullOr` that `programs.git.package` is nullable (home-manager only adds
+it to `home.packages` when non-null) - the same nullable-package
+convention already relied on for lazygit/zellij (see this file's
+2026-07-19 entry). `git` itself stays outside `mkAppSet`/`appSet`
+(unlike the other tools in this file) since it needs real HM-level
+config (`settings`/`signing`/`alias`) that a plain package toggle
+doesn't support - so it's wired by hand:
+`package = alien.mkEntry cfg.git "git" pkgs.git;` inside the existing
+`programs.git` block, plus `"git"` added directly to
+`alienPackages.enabledPackages` (not via `appSet.alienEnabled`, since
+`git` was deliberately never added to `appSet.apps` - doing so would
+have double-added the package through both `appSet.packages` and
+`programs.git.package`).
+
+Added new alien specs: `git-tools.azurelinux3-packages.nix` (`tdnf =
+[ "git" ]`) and `git-tools.azurelinux4-packages.nix` (`dnf5 = [ "git"
+]`) - no other distro (cachyos/opensuse/debian) was touched, since only
+Azure Linux was asked about; git-tools.nix's alien-awareness fix is
+generic and will pick up any future distro's spec automatically once
+added.
+**Validation:** full `activationPackage` build (via
+`--override-input dots-local`), confirmed no alien-spec name conflict
+and `"git"` present in `config.alienPackages.enabledPackages`.
+
+### 2026-07-22 — `nixon`/`nixoff` left `~/.nix-profile/bin` on PATH after `nixoff` (two real bugs, fixed)
+
+User reported `nixoff` didn't produce a genuinely clean host shell -
+`~/.nix-profile/bin` (and other entries) stayed on `$PATH`. Root-caused
+two independent, real bugs in `modules/core/nixon.nix`, both fixed,
+`apply-dots`'d and verified live:
+
+1. **NIXON=0 branch's PATH filter never actually matched
+   `~/.nix-profile/bin`.** It used `grep -v "/nix"`, but
+   `/home/<user>/.nix-profile/bin` has a `.` between the `/` and `nix`
+   (`/.nix-profile`), so the literal substring `/nix` never matches -
+   only real `/nix/store/...`/`/nix/var/...` paths did. Fixed by adding
+   a second exclusion pattern for the substring `nix-profile` (`grep -v
+   -e "/nix" -e "nix-profile"`).
+2. **`.bashrc-dots` was being sourced twice per login shell**, silently
+   accumulating duplicate PATH entries on every toggle. Home Manager's
+   own generated `~/.bash_profile` (from `programs.bash.enable = true`
+   in `flake.nix`) unconditionally sources BOTH `~/.profile` AND
+   `~/.bashrc`; `~/.profile-dots` (reached via `~/.profile`'s
+   dots-managed hook) already sources `~/.bashrc-dots` itself at its
+   end, so for any login shell (`nixon`/`nixoff`'s `exec bash -l`
+   included) `.bashrc-dots` ran once nested inside `.profile-dots` AND
+   again directly via `.bashrc`'s own hook. Fixed with a same-process
+   guard (`_DOTS_BASHRC_DOTS_SOURCED`, plain non-exported var, checked/
+   set as the very first thing in `.bashrc-dots`) - the second
+   invocation returns immediately.
+
+Confirmed the pre-hook/post-hook capability the user also asked about
+(freely adding lines to the real `~/.bashrc` before and after the
+dots-managed sentinel, with post-hook code able to branch on `$NIXON`)
+already works today with zero changes needed -
+`home.activation.ensureDotsShellHook` only appends the sentinel line
+once (guarded by grepping for it) and never touches surrounding content,
+so anything the user adds around it persists across every `apply-dots`.
+
+**Validation:** full `activationPackage` build + real `apply-dots` on
+lub. Direct testing (see `learnings.md`'s matching 2026-07-22 entry for
+why *naive* nested `bash -lc "..."` string tests are unreliable here)
+via standalone script files chaining real `exec bash -l` calls confirmed
+clean `$PATH` (no `nix-profile`, no duplicates) after both a bare
+`nixoff` and a `nixon` → `nixoff` cycle, while a bare `nixon` still
+correctly shows `~/.nix-profile/bin` on PATH.
+
+### 2026-07-22 — New `nix-daemon` shell function (manual per-user Nix profile re-activation)
+
+Follow-up to the `nixoff` PATH-leak fix above: user wants a way to
+manually re-run the system Nix installer's own `nix-daemon.sh` (sets
+`$HOME/.nix-profile/bin`, `/nix/var/nix/profiles/default/bin`,
+`NIX_PROFILES`, `XDG_DATA_DIRS`, `NIX_SSL_CERT_FILE`) from inside a
+`nixoff` shell, without a full `nixon`. Added a `nix-daemon` bash
+function to `.bashrc-dots` (unconditional, not gated on `$NIXON` -
+user explicitly said it's fine for it to also be available in
+`nixon`, where it's a harmless no-op-ish re-run of what `/etc/profile`
+already did at shell start). Implementation:
+`unset __ETC_PROFILE_NIX_SOURCED` then `. /nix/var/nix/profiles/
+default/etc/profile.d/nix-daemon.sh` - the `unset` is required because
+`nix-daemon.sh` guards itself against being sourced twice per shell via
+that exact variable, which `/etc/profile` already set at login-shell
+startup (every login shell, `nixoff` included - see the PATH-leak fix
+entry above), so without clearing it first `nix-daemon.sh` would return
+immediately as a silent no-op.
+**Validation:** full `activationPackage` build + real `apply-dots` on
+lub; ran `nix-daemon` inside a real `NIXON=0` shell (via a standalone
+script, same reliable-testing approach as the PATH-leak fix above) and
+confirmed `~/.nix-profile/bin` and `NIX_PROFILES` etc. came back on
+PATH/env afterward, with nothing else in the shell disturbed (it's a
+plain `source`, not `exec`).
+
+## 2026-07-22: `nixon` mode duplicates `~/.nix-profile/bin` in `$PATH` - root cause and fix
+
+**Problem:** even a single fresh `NIXON=1` login shell (no toggling
+required at all) showed `~/.nix-profile/bin` listed twice in `$PATH`,
+plus `~/.local/bin` twice (the latter a known, separate, upstream
+Home Manager quirk already logged below - not this bug).
+
+**Root cause:** `.bashrc-nix` (pure Home Manager output, produced by
+the gutter eval, not something this repo authors) contains, back to
+back:
+```
+. "/nix/store/.../nix-2.34.8/etc/profile.d/nix.sh"          # unguarded
+. "/home/sp/.nix-profile/etc/profile.d/hm-session-vars.sh"  # guarded by __HM_SESS_VARS_SOURCED
+```
+`nix.sh` itself has no re-entry guard and unconditionally prepends
+`$NIX_LINK/bin` (`~/.nix-profile/bin`) to `$PATH`. `hm-session-vars.sh`
+*also* sources that same `nix.sh` internally, the first time it runs.
+So the very first time `.bashrc-nix` is sourced in a process, `nix.sh`
+gets sourced twice in immediate succession - once directly, once via
+`hm-session-vars.sh` - each unconditionally prepending
+`~/.nix-profile/bin`. This is baked into the Home Manager-generated
+file itself; nothing in this repo controls its content, so it can't be
+"fixed" at the source.
+
+**Fix:** in `.bashrc-dots`'s `NIXON=1` branch (`modules/core/
+nixon.nix`), right after `. ~/.bashrc-nix`, dedup `$PATH` in place
+(first-occurrence-wins, order-preserving):
+```sh
+PATH=$(printf '%s' "$PATH" | awk -v RS=: '!seen[$0]++ { printf "%s%s", sep, $0; sep=":" }')
+export PATH
+```
+This is a downstream cleanup, not a guard - deliberately chosen over
+trying to prevent the double-source (which would mean patching Home
+Manager's own generated file). As a side effect it also cleans up the
+long-standing `~/.local/bin` double-entry from `hm-session-vars.sh`'s
+own hardcoded-plus-`$HOME`-expanded PATH line, so that pre-existing
+quirk is now fully resolved too, at no extra cost.
+
+**Validation:** full `activationPackage` build + real `apply-dots` on
+`lub`. Verified via standalone-script-chained fresh login shells
+(`env -i HOME=... USER=... bash -l ...`, never nested `bash -lc`
+strings - see the testing-pitfall entry in `learnings.md`) covering:
+a bare fresh `NIXON=1` shell, a bare fresh default-`NIXON` shell, and
+a `nixon` → `nixon` → `nixoff` toggle chain. In every case
+`~/.nix-profile/bin` and `~/.local/bin` now appear at most once, and
+`nixoff` still fully strips all `/nix`-related paths as before.
+
+## 2026-07-22: `nixon`/`nixoff` re-exec into a genuinely empty environment (`exec -c`)
+
+**Problem:** `nixoff` never actually produced a clean host environment -
+only a PATH that *looked* clean. Root cause: the old
+`alias nixoff='NIXON=0 exec bash -l'` used `exec`, which replaces the
+running program but does **not** clear its environment - every var the
+old shell had exported (`NIX_PROFILES`, `XDG_DATA_DIRS`,
+`NIX_SSL_CERT_FILE`, `MANPATH`, `FONTCONFIG_FILE`, `RUSTC_WRAPPER`,
+`FZF_DEFAULT_*`, `XCURSOR_PATH`, plus the internal re-entry guards
+`__HM_SESS_VARS_SOURCED`/`__ETC_PROFILE_NIX_SOURCED`) just carried
+straight through. Worse, those surviving guards meant a later `nixon`
+(after a `nixoff`) could silently fail to restore the nix env at all -
+confirmed live: a `nixon → nixoff → nixon` chain ended with
+`~/.nix-profile/bin` **missing** from `$PATH` entirely, because the
+still-set `__HM_SESS_VARS_SOURCED` guard tricked `hm-session-vars.sh`
+into thinking it had already run.
+
+**Fix:** `nixon`/`nixoff` are now bash functions (`_nixon_toggle`,
+`modules/core/nixon.nix`) that re-exec via bash's `exec -c` builtin -
+run the given command with a genuinely EMPTY environment - instead of
+plain `exec`. Since `-c` clears everything, they explicitly re-populate
+just what's needed via `env VAR=val ...`: `NIXON=<target>` plus whatever
+is currently set from `dotsLocal.nixonEnvAllowlist` (new schema field,
+`modules/local/schema.nix`, sensible built-in default covering
+TERM/HOME/USER/SHELL/LANG/DISPLAY/WAYLAND_DISPLAY/XDG_*/SSH_*/WSL
+interop vars/etc.) plus any extra names passed as arguments (e.g.
+`nixon MY_TOKEN`) - per-invocation escape hatch beyond the default list.
+Every toggle now rebuilds state from scratch via `/etc/profile` +
+`.profile-dots`/`.bashrc-dots`, deterministically, with zero leftover
+guards or nix vars.
+
+Also, per explicit user instruction, removed the PATH-dedup pass added
+earlier (previous entry above) - "that's hiding problems not fixing
+them." The known upstream `.bashrc-nix` quirk (Home Manager's generated
+file unconditionally re-sources `nix.sh` on its own line in addition to
+`hm-session-vars.sh`, which - the first time it runs - also sources that
+same `nix.sh` internally, giving `~/.nix-profile/bin`/`~/.local/bin` a
+harmless double PATH-prepend within any single `NIXON=1` shell) is left
+visible and documented in a comment rather than papered over; it's not
+something this repo can fix since it lives in Home Manager's own
+generated output, and it does not compound across `nixon`/`nixoff`
+toggles (confirmed live: stays at exactly 2x, never accumulates further).
+
+Also renamed `nix-daemon` → `source-nix-daemon`, and added two siblings
+in the same style/shape: `source-profile-nix` (re-sources `~/.profile-
+nix`) and `source-hm-session-vars` (re-sources `hm-session-vars.sh`
+directly via the `~/.nix-profile` symlink path) - all three clear their
+underlying script's own re-entry guard first to force a real re-run
+instead of a silent no-op, for manually pulling in one specific piece of
+the nix environment without a full `nixon`.
+
+**Validation:** full `activationPackage` build + real `apply-dots` on
+`lub`. Verified via a real pty-backed interactive shell (`script -qec
+"bash -l" ... < commands.txt`, required since `.bashrc-nix`'s content is
+gated on `[[ $- == *i* ]]` - a plain non-interactive `bash -l script.sh`
+does not exercise it) running `nixon` → `nixoff` → `nixon`: `nixoff`
+now shows a fully clean `$PATH` with `__HM_SESS_VARS_SOURCED` unset; the
+following `nixon` correctly restores `~/.nix-profile/bin` (previously
+broken); `source-hm-session-vars` verified working standalone from a
+`nixoff` shell.
+
+## 2026-07-22: `nixon`/`nixoff` mode-token interface (`--`/`-`/`*`/`VAR`)
+
+Extended `_nixon_toggle` (`modules/core/nixon.nix`) with an explicit
+mode argument, parsed alongside any number of extra var names, in any
+order:
+- (no args) / `-` - clear the environment, then re-add
+  `dotsLocal.nixonEnvAllowlist` (the default set). This is the default
+  behavior with no arguments at all.
+- `--` - clear the environment fully, no defaults added.
+- `*` - keep the current environment as-is (plain `exec`, no `-c` -
+  the pre-2026-07-22 behavior).
+- `VAR` - preserve this variable's current value no matter what mode
+  was otherwise specified, even under `--` (e.g. `nixon -- MY_TOKEN`).
+
+Implementation parses `"$@"` in a loop, classifying each arg as a mode
+token (`--`/`-`/`*`) or an extra var name; `*` short-circuits to a plain
+`exec bash -l` (keeping the whole environment, no `env`/`-c` involved);
+`--`/`-` build an `env VAR=val ...` assignment list (empty allowlist for
+`--`, `dotsLocal.nixonEnvAllowlist` for `-`) plus any extra var names,
+then `exec -c env "${assigns[@]}" bash -l`.
+
+**Validation:** full `activationPackage` build + real `apply-dots` on
+`lub`, verified via pty-backed interactive shell (`script -qec "bash
+-l"` + piped commands - see the interactive-testing learning above)
+covering all four forms: `nixoff --` (HOME itself ends up unset -
+confirms genuinely empty env), `nixon -- MYTOKEN` (only `MYTOKEN`
+survives, not `TERM`/other defaults), `nixon *` (verbatim carry-over of
+whatever was already set, including a previously-broken `HOME`, since
+it deliberately does no rebuild), and plain `nixon`/`nixoff`/`nixon -`
+(same clean-scrub/restore behavior as before, confirmed unaffected by
+the refactor).
+
+## 2026-07-22: `nixon`/`nixoff` final CLI - `--help`, `VAR=value`, command passthrough, `+` instead of `*`
+
+Finalized the `_nixon_toggle` (`modules/core/nixon.nix`) argument
+grammar to:
+
+```
+nixon|nixoff [VAR|VAR=value ...] [-|--|+] [COMMAND [ARG...]]
+```
+
+- Variable specs come first, in `env`-style syntax: a bare `VAR`
+  preserves its current value (unchanged from the mode-token round);
+  `VAR=value` sets it to an explicit value instead, working "just like
+  `env VAR=value ...`" per the user's request. Explicit assigns are
+  appended after the allowlist-derived assigns in the final `assigns`
+  array, so they always win for the same name (relies on `env`'s
+  keep-the-last-duplicate semantics).
+- An optional mode token follows the var-spec list: `-` (default),
+  `--`, or `+` (keep-current-env, was `*` in the previous round -
+  **changed to `+` because `*` is a shell glob and gets expanded by
+  the calling shell unless quoted**; `+` needs no quoting and isn't a
+  glob character).
+- An optional `COMMAND [ARG...]` follows the mode token (or follows the
+  last var spec, if no mode token is given at all). If present, it's
+  run via `bash -l -c '"$@"' _ "${cmd[@]}"` (or plain `bash -l -c
+  '"$@"' _ "${cmd[@]}"` without `env`/`-c` under `+` mode) instead of
+  dropping into an interactive shell. `-l` is kept even in `-c` form,
+  so the full `.profile-dots`/`.bashrc-dots` chain still runs before
+  the command executes.
+- **Important grammar consequence (by design, matches the user's
+  literal spec that COMMAND comes "AFTER" the mode token): a bare
+  command with no preceding mode token is NOT distinguishable from a
+  list of bare `VAR` names to preserve** (both are just bareword
+  identifiers) - e.g. `nixon echo hi` is parsed as "preserve vars named
+  `echo` and `hi`", not "run `echo hi`". To run a command you must
+  always include an explicit mode token first, e.g. `nixon -- echo
+  hi` or `nixon + echo hi`. This was verified interactively and is
+  intentional, not a bug.
+- Added `_nixon_help` (triggered by `--help`/`-h`, checked during the
+  var-scanning loop so it works regardless of position among var
+  specs) printing the full grammar, semantics of each mode token, and
+  worked examples. It's static/generic text (not parameterized per
+  `nixon` vs `nixoff`), a deliberate simplification.
+
+**Validation:** full `activationPackage` build + real `apply-dots` on
+`lub`; pty-backed tests (`script -qec "bash -l"`, per the
+interactive-testing learning) covering `nixon --help`/`nixoff --help`
+output, `nixon FOO=barval` (explicit assign visible in the new shell),
+`+` mode with an unquoted trailing command (`nixon + echo ... KEEPME=$KEEPME`
+- confirmed no glob-expansion issue, unlike the initial `*` design
+which got expanded to filenames by the calling shell when unquoted),
+and the bare-var-vs-command ambiguity above (confirmed intentional
+per-spec behavior, not a regression).

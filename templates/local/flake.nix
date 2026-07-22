@@ -28,6 +28,13 @@
       homeDirectory = "@@HOMEDIR@@";
       context = "@@CONTEXT@@";
       nixonDefault = false;
+      # nixonEnvAllowlist has a sensible built-in default (TERM, HOME,
+      # DISPLAY/WAYLAND_DISPLAY, SSH_AUTH_SOCK, WSL interop vars, etc. -
+      # see dots-local-options for the full list) covering what `nixon`/
+      # `nixoff` preserve across their `exec -c` re-exec. Only needed here
+      # to add machine-specific extras beyond that default:
+      # nixonEnvAllowlist = [ "MY_EXTRA_VAR" ];
+
       # enableGuiDefaults defaults to false, and is also automatically
       # forced off whenever graphicalBackend is "none" (the default) -
       # see dots-local-options for the full description. Uncomment both

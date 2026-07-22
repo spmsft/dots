@@ -2,6 +2,12 @@
 
 let
   nixonDefaultStr = if dotsLocal.nixonDefault then "1" else "0";
+
+  # Bash array literal, e.g. ( "TERM" "HOME" ... ), embedded verbatim into
+  # the generated shell code below as the default env-var allowlist for
+  # `nixon`/`nixoff`'s `exec -c` re-exec.
+  nixonEnvAllowlistBash =
+    "( " + (lib.concatStringsSep " " (map (v: "\"${v}\"") dotsLocal.nixonEnvAllowlist)) + " )";
 in
 
 {
@@ -34,6 +40,26 @@ in
 
   home.file.".bashrc-dots" = {
     text = ''
+      # Guard against running twice in the same shell process. Home
+      # Manager's own generated ~/.bash_profile (via `programs.bash.enable
+      # = true` in flake.nix) unconditionally sources BOTH ~/.profile AND
+      # ~/.bashrc (`[[ -f ~/.profile ]] && . ~/.profile` then
+      # `[[ -f ~/.bashrc ]] && . ~/.bashrc`) - and ~/.profile-dots (sourced
+      # via ~/.profile's own dots-managed hook) already sources this file
+      # itself at its end, so for any login shell (including the `nixon`/
+      # `nixoff` aliases' `exec bash -l`) this file would otherwise be
+      # sourced twice: once nested inside ~/.profile-dots, once again
+      # directly via ~/.bashrc's own dots-managed hook. Without this guard,
+      # every PATH mutation below (NIXON=0's `/nix`-stripping included)
+      # runs twice per login shell, silently accumulating duplicate PATH
+      # entries on every nixon/nixoff toggle - confirmed as the real cause
+      # of repeated `~/.nix-profile/bin`/`~/.local/bin` entries observed in
+      # `$PATH` after a `nixon` → `nixoff` cycle.
+      if [ -n "''${_DOTS_BASHRC_DOTS_SOURCED:-}" ]; then
+        return 0 2>/dev/null || true
+      fi
+      _DOTS_BASHRC_DOTS_SOURCED=1
+
       if [ -z "''${NIXON+x}" ]; then export NIXON=${nixonDefaultStr}; fi
 
       # --- 0. SHELL FOUNDATIONS (Universal) ---
@@ -50,8 +76,175 @@ in
       echo -n -e "\e[10;440]"
      
       # --- 2. THE NIXON GATEKEEPER ---
-      alias nixon='NIXON=1 exec bash -l'
-      alias nixoff='NIXON=0 exec bash -l'
+      #
+      # `nixon`/`nixoff` used to be plain `NIXON=<n> exec bash -l` aliases.
+      # `exec` replaces the running process image but does NOT clear its
+      # environment - every var the old shell had exported (all the nix-
+      # injected ones: `NIX_PROFILES`, `XDG_DATA_DIRS`, `NIX_SSL_CERT_FILE`,
+      # `MANPATH`, `FONTCONFIG_FILE`, `RUSTC_WRAPPER`, `FZF_DEFAULT_*`,
+      # `XCURSOR_PATH`, plus the internal re-entry guards
+      # `__HM_SESS_VARS_SOURCED`/`__ETC_PROFILE_NIX_SOURCED`) just carried
+      # straight through - so `nixoff` never actually produced a clean
+      # host environment, only a PATH that merely *looked* clean, and a
+      # later `nixon` could fail to restore the nix env at all (those
+      # surviving guards trick `hm-session-vars.sh` into thinking it
+      # already ran). Both now re-exec via `exec -c` (a bash builtin: run
+      # the given command with a genuinely EMPTY environment) by default,
+      # so every toggle rebuilds state from scratch via `/etc/profile` +
+      # `.profile-dots`/`.bashrc-dots`, deterministically, with zero
+      # leftover cruft. See `_nixon_help` below for the full CLI (`nixon
+      # --help`/`nixoff --help`).
+      _nixon_help() {
+        cat <<'EOF'
+Usage: nixon|nixoff [VAR|VAR=value ...] [-|--|*] [COMMAND [ARG...]]
+
+Re-exec into a fresh `bash -l` login shell with $NIXON set to 1 (nixon)
+or 0 (nixoff), controlling how much of the current environment
+survives the re-exec (see modules/core/nixon.nix for the full
+rationale). Arguments are parsed in this order - variable specs first,
+then an optional mode token, then an optional command:
+
+  VAR         preserve VAR's current value, no matter what mode follows
+  VAR=value   set VAR to this explicit value, no matter what mode follows
+              (works just like `env VAR=value ...` - the assignment
+              always wins over anything a mode/allowlist would add)
+  -           (default) clear the environment, then re-add
+              dotsLocal.nixonEnvAllowlist's defaults
+  --          clear the environment fully - no defaults added
+  +           keep the current environment as-is (plain `exec`, no `-c`)
+              (not `*` - that's a shell glob and would need quoting)
+  COMMAND     if given, run this via `bash -l -c` instead of dropping
+              into an interactive shell; everything after the mode
+              token (or after the last VAR spec, if no mode token is
+              given) is treated as the command and its arguments.
+
+Examples:
+  nixon                          clean scrub, load the nix env
+  nixoff                         clean scrub, pure host shell
+  nixon -- MY_TOKEN               fully empty env except MY_TOKEN+NIXON
+  nixon FOO=bar                  default env, plus FOO=bar
+  nixoff + echo hi               keep everything, just run `echo hi`
+  nixon -- nix run nixpkgs#hello
+EOF
+      }
+
+      _nixon_toggle() {
+        local target="$1" name="$2"; shift 2
+
+        local -a preserve_vars=() explicit_assigns=() cmd=()
+        local mode="-" scanning_vars=1 arg
+
+        for arg in "$@"; do
+          if [ "$scanning_vars" = 1 ]; then
+            case "$arg" in
+              --help|-h)
+                _nixon_help
+                return 0
+                ;;
+              -|--|+)
+                mode="$arg"
+                scanning_vars=0
+                continue
+                ;;
+            esac
+            if [[ "$arg" == *=* ]]; then
+              explicit_assigns+=("$arg")
+              continue
+            elif [[ "$arg" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+              preserve_vars+=("$arg")
+              continue
+            fi
+            # Doesn't look like a var spec or a mode token - the command
+            # starts here, with the default mode ("-").
+            scanning_vars=0
+          fi
+          cmd+=("$arg")
+        done
+
+        if [ "$mode" = "+" ]; then
+          export NIXON="$target"
+          local a
+          for a in "''${explicit_assigns[@]}"; do
+            export "$a"
+          done
+          if [ "''${#cmd[@]}" -eq 0 ]; then
+            exec bash -l
+          else
+            exec bash -l -c '"$@"' _ "''${cmd[@]}"
+          fi
+        fi
+
+        local -a allowlist=()
+        if [ "$mode" = "-" ]; then
+          allowlist=${nixonEnvAllowlistBash}
+        fi
+        allowlist+=("''${preserve_vars[@]}")
+
+        local -a assigns=("NIXON=$target")
+        local v
+        for v in "''${allowlist[@]}"; do
+          if [ -n "''${!v+x}" ]; then
+            assigns+=("$v=''${!v}")
+          fi
+        done
+        # Explicit `VAR=value` specs are appended last, so they always
+        # win over an allowlist-derived value for the same name - `env`
+        # (like `export`) keeps the last assignment when a name repeats.
+        assigns+=("''${explicit_assigns[@]}")
+
+        if [ "''${#cmd[@]}" -eq 0 ]; then
+          exec -c env "''${assigns[@]}" bash -l
+        else
+          exec -c env "''${assigns[@]}" bash -l -c '"$@"' _ "''${cmd[@]}"
+        fi
+      }
+      nixon() { _nixon_toggle 1 nixon "$@"; }
+      nixoff() { _nixon_toggle 0 nixoff "$@"; }
+
+      # `source-nix-daemon`/`source-profile-nix`/`source-hm-session-vars`:
+      # manually (re-)run one specific piece of the nix environment setup,
+      # without a full `nixon`/re-login. All three share the same shape -
+      # each of the three underlying scripts guards itself against being
+      # sourced twice per shell via its own internal marker variable
+      # (already set the first time it ran - e.g. `/etc/profile` sets
+      # `__ETC_PROFILE_NIX_SOURCED` on every login shell, `nixoff`
+      # included), so that guard is explicitly cleared first to force a
+      # real re-run instead of a silent no-op. Safe to call from either
+      # NIXON state (in `nixon` it's just a redundant re-run of what
+      # already happened at shell start).
+      source-nix-daemon() {
+        local script="/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh"
+        if [ ! -e "$script" ]; then
+          echo "source-nix-daemon: $script not found" >&2
+          return 1
+        fi
+        unset __ETC_PROFILE_NIX_SOURCED
+        . "$script"
+      }
+
+      # `~/.profile-nix` (pure Home Manager output) is just a thin wrapper
+      # that sources `hm-session-vars.sh` from its nix-store path.
+      source-profile-nix() {
+        if [ ! -f ~/.profile-nix ]; then
+          echo "source-profile-nix: ~/.profile-nix not found" >&2
+          return 1
+        fi
+        unset __HM_SESS_VARS_SOURCED
+        . ~/.profile-nix
+      }
+
+      # Sources `hm-session-vars.sh` directly via the `~/.nix-profile`
+      # symlink (rather than `~/.profile-nix`'s nix-store path) - the same
+      # entry point `.bashrc-nix` itself uses.
+      source-hm-session-vars() {
+        local script=~/.nix-profile/etc/profile.d/hm-session-vars.sh
+        if [ ! -e "$script" ]; then
+          echo "source-hm-session-vars: $script not found" >&2
+          return 1
+        fi
+        unset __HM_SESS_VARS_SOURCED
+        . "$script"
+      }
 
       # The raw system Nix installation (the `nix`/`nh`/`home-manager`
       # binaries themselves) lives at /nix/var/nix/profiles/default/bin -
@@ -73,10 +266,35 @@ in
 
       if [ "$NIXON" = "1" ]; then
         # NIX-ON MODE: Load nix environment
-        [[ -f ~/.bashrc-nix ]] && . ~/.bashrc-nix       
+        #
+        # Note: `.bashrc-nix` (pure Home Manager output, not authored by
+        # this repo) unconditionally re-sources the `nix` package's own
+        # `nix.sh` on its own line, in addition to `hm-session-vars.sh`
+        # (which - the *first* time it runs - also sources that same
+        # `nix.sh` internally). Since that direct `nix.sh` line has no
+        # sourcing guard of its own, a single login shell that reaches
+        # `.bashrc-nix` ends up with `$NIX_LINK/bin` (`~/.nix-profile/
+        # bin`) prepended to `$PATH` twice in one go - confirmed live,
+        # with no `nixon`/`nixoff` toggling involved. This is an upstream
+        # Home Manager quirk baked into generated file content we don't
+        # control, not something introduced or fixable here - intentionally
+        # left as-is rather than papering over it with a PATH dedup pass,
+        # which would hide the underlying duplication instead of fixing it.
+        [[ -f ~/.bashrc-nix ]] && . ~/.bashrc-nix
       else
         # NON-NIX MODE: Pure host environment
-        export PATH=$(echo "$PATH" | tr ":" "\n" | grep -v "/nix" | tr "\n" ":" | sed 's/:$//')
+        #
+        # `grep -v "/nix"` alone does NOT catch `~/.nix-profile/bin` (the
+        # per-user Home Manager profile symlink, e.g.
+        # "/home/sp/.nix-profile/bin") - that path contains "/.nix-profile",
+        # not the literal substring "/nix" (there's a "." between the "/"
+        # and "nix"), so it silently survived the strip below, leaving the
+        # entire Home Manager package set on PATH even in "pure host"
+        # mode. Confirmed live: `nixoff` still showed `~/.nix-profile/bin`
+        # (duplicated) in `$PATH`. Excluding "nix-profile" as its own
+        # pattern (in addition to "/nix", which still correctly strips
+        # real `/nix/store/...`/`/nix/var/...` entries) fixes this.
+        export PATH=$(echo "$PATH" | tr ":" "\n" | grep -v -e "/nix" -e "nix-profile" | tr "\n" ":" | sed 's/:$//')
         export PATH="$PATH:/nix/var/nix/profiles/default/bin"
         alias ls='ls --color=auto'
         if [ "$EUID" -eq 0 ]; then
