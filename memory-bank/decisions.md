@@ -2809,3 +2809,75 @@ output, `nixon FOO=barval` (explicit assign visible in the new shell),
 which got expanded to filenames by the calling shell when unquoted),
 and the bare-var-vs-command ambiguity above (confirmed intentional
 per-spec behavior, not a regression).
+
+## 2026-07-22: nixon/nixoff redesign - deterministic "as-if-fresh-login-shell" model
+
+**Context:** the previous `exec -c` + allowlist design (see prior entry)
+produced a PATH that only *looked* clean - `nixoff` still leaked
+`/nix/var/nix/profiles/default/bin`/`~/.nix-profile/bin`, and a deeper
+investigation revealed the actual, sole root cause: **the Determinate
+Nix installer had dropped an unconditional, unguarded-by-NIXON "Nix"/
+"End Nix" block sourcing `nix-daemon.sh` in BOTH
+`/etc/profile.d/nix.sh` (system-wide, sourced by `/etc/profile` for
+every login shell) AND directly at the top of `/etc/bash.bashrc`
+(system-wide, sourced by `/etc/profile`'s own `test -r /etc/bash.bashrc`
+line for every INTERACTIVE shell, login or not)**. Both had to be found
+and manually disabled (`sed -i '/^# Nix$/,/^# End Nix$/d' /etc/bash.bashrc`
+plus renaming `/etc/profile.d/nix.sh` to a non-`.sh` extension) before
+`nixoff` could ever be genuinely nix-free - no amount of
+`.bashrc-dots`-level scrubbing could have fixed this, since both files
+run before `.profile-dots`/`.bashrc-dots` even get a chance to. This is
+an out-of-repo, system-level, host-specific fix (not encoded in `dots`
+itself) - if `nix upgrade`/installer repair ever recreates either file,
+this needs to be redone.
+
+**Confirmed final target design** (superseding the prior allowlist-only
+`exec -c` design): `nixon`/`nixoff` should always produce the SAME
+result by default - "as if" a brand-new login shell had started with
+`$NIXON` already at 1 or 0 - plus dotsLocal/module-registered preserve
+vars, plus whatever the caller explicitly asked to carry over. Session/
+socket-var leakage (`DISPLAY`, `SSH_AUTH_SOCK`, etc.) surviving via the
+allowlist is fine and expected; the hard requirement is no *nix*-specific
+leftovers.
+
+- `--`: `exec -c` (genuinely empty env) + only explicit CLI
+  `VAR`/`VAR=value` specs.
+- `-` (default): `exec -c` + `dotsLocal.nixonEnvAllowlist` + new
+  `options.core.nixonPreserveVars` (module-level, mergeable list,
+  declared in `modules/core/nixon.nix` itself, following the
+  `options.core.*` convention from `modules/core/platform.nix`) +
+  explicit CLI specs.
+- `+`: plain `exec` (keep everything) + explicit CLI specs layered on
+  top.
+- Every preserved/explicit var is now handed off via BOTH the real name
+  directly (`NAME=value`, so it's genuinely correct from the very start
+  of the re-exec'd shell) AND a `_PRESERVE_<NAME>` shadow var (restored
+  at the very end of `.bashrc-dots`, after nix-loading, as a final-say
+  safety net). The direct form was necessary once we noticed
+  `nix-daemon.sh`/`nix.sh` compute `$HOME/.nix-profile` during
+  `/etc/profile`/`/etc/bash.bashrc`, i.e. BEFORE `.bashrc-dots`'s own
+  shadow-restore step would have run - shadow-only handoff produced a
+  broken `/.nix-profile/bin` (empty-`$HOME`-prefixed) PATH entry and an
+  empty `NIX_PROFILES`, since the store `nix.sh` requires non-empty
+  `$HOME`/`$USER` to do anything at all and has no re-entry guard var of
+  its own to signal a skipped run.
+- The `/nix/var/nix/profiles/default/bin` PATH entry (needed for
+  `nix`/`nh`/`home-manager` themselves, which aren't part of the HM
+  profile) moved from unconditional to inside the `NIXON=1` branch only.
+- The old `grep -v -e "/nix" -e "nix-profile"` PATH-stripping block in
+  the `NIXON=0` branch was removed entirely - no longer needed, since
+  `-`/`--` modes now reach that branch with a genuinely empty
+  environment to begin with (`+` intentionally keeps whatever was there,
+  matching its "retain everything" semantics).
+
+**Validation:** full `activationPackage` build, `apply-dots` on `lub`,
+pty-backed tests (`script -qec "bash -l"`) after disabling both system
+files, covering: `nixoff` default (byte-identical to a genuinely fresh
+`env -i HOME=... USER=... bash -l`'s PATH, confirmed), `nixon` default
+(nix fully loaded, `NIX_PROFILES` correctly resolved with a real
+`~/.nix-profile` path), a full `nixon`→`nixoff` round trip (clean →
+loaded → clean again, no leftover state), `--`/`VAR` (only the named
+var survives, `HOME` genuinely empty as intended), default `-`/
+`VAR=value` (both allowlist defaults and the explicit assign present),
+`+`/command-passthrough (`nixon + echo ...` runs and exits normally),
+and `--help` text.

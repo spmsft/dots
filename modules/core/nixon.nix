@@ -3,14 +3,33 @@
 let
   nixonDefaultStr = if dotsLocal.nixonDefault then "1" else "0";
 
-  # Bash array literal, e.g. ( "TERM" "HOME" ... ), embedded verbatim into
-  # the generated shell code below as the default env-var allowlist for
-  # `nixon`/`nixoff`'s `exec -c` re-exec.
+  # Bash array literals, e.g. ( "TERM" "HOME" ... ), embedded verbatim into
+  # the generated shell code below as the default env-var preserve list
+  # for `nixon`/`nixoff`'s default (`-`) mode.
   nixonEnvAllowlistBash =
     "( " + (lib.concatStringsSep " " (map (v: "\"${v}\"") dotsLocal.nixonEnvAllowlist)) + " )";
+  nixonPreserveVarsBash =
+    "( " + (lib.concatStringsSep " " (map (v: "\"${v}\"") config.core.nixonPreserveVars)) + " )";
 in
 
 {
+  options.core.nixonPreserveVars = lib.mkOption {
+    type = lib.types.listOf lib.types.str;
+    default = [ ];
+    description = ''
+      Extra environment variable names `nixon`/`nixoff` should preserve
+      across their default (`-`) mode re-exec, on top of
+      `dotsLocal.nixonEnvAllowlist`. Intended for *modules* that need a
+      specific var to survive the environment wipe (e.g. because some
+      tool they configure relies on it being set in every shell) - end
+      users should prefer `dotsLocal.nixonEnvAllowlist` instead. Values
+      set here are merged (module-system list concatenation) with every
+      other module's contributions and with `dotsLocal.nixonEnvAllowlist`
+      at the point `nixon`/`nixoff` builds their preserve list.
+    '';
+  };
+
+  config = {
   # .bashrc-nix / .profile-nix: pure Home Manager output (via the
   # "gutter eval" in flake.nix).
   home.file.".bashrc-nix".source = bashrcDerivation;
@@ -85,42 +104,67 @@ in
       # `XCURSOR_PATH`, plus the internal re-entry guards
       # `__HM_SESS_VARS_SOURCED`/`__ETC_PROFILE_NIX_SOURCED`) just carried
       # straight through - so `nixoff` never actually produced a clean
-      # host environment, only a PATH that merely *looked* clean, and a
-      # later `nixon` could fail to restore the nix env at all (those
-      # surviving guards trick `hm-session-vars.sh` into thinking it
-      # already ran). Both now re-exec via `exec -c` (a bash builtin: run
-      # the given command with a genuinely EMPTY environment) by default,
-      # so every toggle rebuilds state from scratch via `/etc/profile` +
-      # `.profile-dots`/`.bashrc-dots`, deterministically, with zero
-      # leftover cruft. See `_nixon_help` below for the full CLI (`nixon
-      # --help`/`nixoff --help`).
+      # host environment, only a PATH that merely *looked* clean.
+      #
+      # The goal: `nixon`/`nixoff` should always drop you into the SAME
+      # environment by default - "as if" you'd started a brand-new login
+      # shell with $NIXON already set to 1 or 0 - plus dotsLocal/module-
+      # registered vars, plus whatever you explicitly asked to carry over.
+      # Some incidental leakage (display/session/socket vars like
+      # `DISPLAY`, `SSH_AUTH_SOCK`, `WAYLAND_DISPLAY`) surviving via those
+      # allowlists is fine; the important guarantee is no *nix*-specific
+      # leftovers (`~/.nix-profile/bin` on `$PATH`, `NIX_PROFILES`, etc.)
+      # linger into a `nixoff` shell, and nix-loading in a `nixon` shell
+      # is never blocked by a stale re-entry guard surviving from before.
+      #
+      # `-`/`--` re-exec via `exec -c` (bash builtin: run the given
+      # command with a genuinely EMPTY environment), so every toggle
+      # rebuilds state from scratch via `/etc/profile` + `.profile-dots`/
+      # `.bashrc-dots`, deterministically, with zero leftover cruft. `+`
+      # re-execs via plain `exec` (keeps the current environment as-is).
+      #
+      # Preserved/explicit vars are handed off via `_PRESERVE_<NAME>`
+      # shadow vars rather than the real names directly - the real names
+      # get restored from these shadows at the very END of this file (see
+      # "RESTORE PRESERVED/EXPLICIT VARS" below), i.e. AFTER nix-loading,
+      # so they always win last no matter what `.bashrc-nix`/
+      # `hm-session-vars.sh` set along the way. `NIXON` itself is the one
+      # exception - it's passed straight through under its own name, since
+      # `.profile-dots` needs its real value immediately, before
+      # `.bashrc-dots` (and the shadow-restore step) even runs.
+      #
+      # See `_nixon_help` below for the full CLI (`nixon --help`/`nixoff
+      # --help`).
       _nixon_help() {
         cat <<'EOF'
-Usage: nixon|nixoff [VAR|VAR=value ...] [-|--|*] [COMMAND [ARG...]]
+Usage: nixon|nixoff [VAR|VAR=value ...] [-|--|+] [COMMAND [ARG...]]
 
 Re-exec into a fresh `bash -l` login shell with $NIXON set to 1 (nixon)
-or 0 (nixoff), controlling how much of the current environment
-survives the re-exec (see modules/core/nixon.nix for the full
-rationale). Arguments are parsed in this order - variable specs first,
-then an optional mode token, then an optional command:
+or 0 (nixoff) - by default, the SAME environment every time, "as if"
+starting a brand-new login shell in that NIXON state - controlling how
+much of the CURRENT shell's environment additionally survives the
+re-exec (see modules/core/nixon.nix for the full rationale). Arguments
+are parsed in this order - variable specs first, then an optional mode
+token, then an optional command:
 
   VAR         preserve VAR's current value, no matter what mode follows
   VAR=value   set VAR to this explicit value, no matter what mode follows
-              (works just like `env VAR=value ...` - the assignment
-              always wins over anything a mode/allowlist would add)
-  -           (default) clear the environment, then re-add
-              dotsLocal.nixonEnvAllowlist's defaults
-  --          clear the environment fully - no defaults added
+              (always wins over anything a mode/allowlist would add,
+              and over whatever nix-loading itself might set)
+  -           (default) fully clean environment, then re-add
+              dotsLocal.nixonEnvAllowlist + any module-registered
+              core.nixonPreserveVars defaults
+  --          fully clean environment - no defaults added, only
+              explicit VAR/VAR=value specs survive
   +           keep the current environment as-is (plain `exec`, no `-c`)
-              (not `*` - that's a shell glob and would need quoting)
   COMMAND     if given, run this via `bash -l -c` instead of dropping
               into an interactive shell; everything after the mode
               token (or after the last VAR spec, if no mode token is
               given) is treated as the command and its arguments.
 
 Examples:
-  nixon                          clean scrub, load the nix env
-  nixoff                         clean scrub, pure host shell
+  nixon                          fresh env, nix loaded on top
+  nixoff                         fresh env, pure host shell
   nixon -- MY_TOKEN               fully empty env except MY_TOKEN+NIXON
   nixon FOO=bar                  default env, plus FOO=bar
   nixoff + echo hi               keep everything, just run `echo hi`
@@ -161,10 +205,47 @@ EOF
           cmd+=("$arg")
         done
 
+        # Names whose CURRENT value should be captured and handed off,
+        # both directly (`NAME=value`, so it's genuinely set from the
+        # very start of the re-exec'd shell - needed because system-level
+        # startup files like `/etc/profile.d/nix.sh` run during
+        # `/etc/profile`, BEFORE `.profile-dots`/`.bashrc-dots` ever get a
+        # chance to run, and some of them - `nix-daemon.sh` computing
+        # `$HOME/.nix-profile` for `$PATH` chief among them - genuinely
+        # need e.g. `$HOME` to already be correct at that point) and via a
+        # `_PRESERVE_<NAME>` shadow var (restored at the very end of
+        # `.bashrc-dots`, as a final-say safety net in case anything
+        # later in the chain - nix-loading included - clobbers one of
+        # them). `-` mode additionally includes dotsLocal's and every
+        # module's registered preserve-var names; `--`/`+` only carry
+        # over whatever the caller explicitly named.
+        local -a preserve_names=()
+        if [ "$mode" = "-" ]; then
+          preserve_names=${nixonEnvAllowlistBash}
+          preserve_names+=${nixonPreserveVarsBash}
+        fi
+        preserve_names+=("''${preserve_vars[@]}")
+
+        local -a direct_assigns=("NIXON=$target") shadow_assigns=()
+        local v
+        for v in "''${preserve_names[@]}"; do
+          if [ -n "''${!v+x}" ]; then
+            direct_assigns+=("$v=''${!v}")
+            shadow_assigns+=("_PRESERVE_$v=''${!v}")
+          fi
+        done
+        # Explicit `VAR=value` specs are appended last, so they always
+        # win over a same-named preserve entry - `env`/`export` (like
+        # plain shell assignment) keep the last assignment when a name
+        # repeats.
+        local a
+        for a in "''${explicit_assigns[@]}"; do
+          direct_assigns+=("$a")
+          shadow_assigns+=("_PRESERVE_''${a%%=*}=''${a#*=}")
+        done
+
         if [ "$mode" = "+" ]; then
-          export NIXON="$target"
-          local a
-          for a in "''${explicit_assigns[@]}"; do
+          for a in "''${direct_assigns[@]}" "''${shadow_assigns[@]}"; do
             export "$a"
           done
           if [ "''${#cmd[@]}" -eq 0 ]; then
@@ -174,28 +255,10 @@ EOF
           fi
         fi
 
-        local -a allowlist=()
-        if [ "$mode" = "-" ]; then
-          allowlist=${nixonEnvAllowlistBash}
-        fi
-        allowlist+=("''${preserve_vars[@]}")
-
-        local -a assigns=("NIXON=$target")
-        local v
-        for v in "''${allowlist[@]}"; do
-          if [ -n "''${!v+x}" ]; then
-            assigns+=("$v=''${!v}")
-          fi
-        done
-        # Explicit `VAR=value` specs are appended last, so they always
-        # win over an allowlist-derived value for the same name - `env`
-        # (like `export`) keeps the last assignment when a name repeats.
-        assigns+=("''${explicit_assigns[@]}")
-
         if [ "''${#cmd[@]}" -eq 0 ]; then
-          exec -c env "''${assigns[@]}" bash -l
+          exec -c env "''${direct_assigns[@]}" "''${shadow_assigns[@]}" bash -l
         else
-          exec -c env "''${assigns[@]}" bash -l -c '"$@"' _ "''${cmd[@]}"
+          exec -c env "''${direct_assigns[@]}" "''${shadow_assigns[@]}" bash -l -c '"$@"' _ "''${cmd[@]}"
         fi
       }
       nixon() { _nixon_toggle 1 nixon "$@"; }
@@ -246,27 +309,28 @@ EOF
         . "$script"
       }
 
-      # The raw system Nix installation (the `nix`/`nh`/`home-manager`
-      # binaries themselves) lives at /nix/var/nix/profiles/default/bin -
-      # this is NOT part of the Home Manager profile (~/.nix-profile/bin
-      # never contains `nix` itself, since Nix is a system-level install,
-      # not a home.packages entry), so it has to be added here explicitly
-      # regardless of NIXON state. Without this unconditional guard, a
-      # shell that starts directly in NIXON=1 mode (nixonDefault=true, or
-      # any terminal spawned fresh inside a graphical session that never
-      # went through a NIXON=0 ancestor shell to inherit the PATH append
-      # below) has no working `nix`/`nh`/`home-manager` at all - `.bashrc-
-      # nix` is pure Home Manager output and has no reason to know about
-      # the system Nix installation's own bin dir. Confirmed as the root
-      # cause of a real `nh`/`nix --version` failure during `apply-dots`.
-      case ":$PATH:" in
-        *":/nix/var/nix/profiles/default/bin:"*) ;;
-        *) export PATH="$PATH:/nix/var/nix/profiles/default/bin" ;;
-      esac
-
       if [ "$NIXON" = "1" ]; then
         # NIX-ON MODE: Load nix environment
         #
+        # The raw system Nix installation (the `nix`/`nh`/`home-manager`
+        # binaries themselves) lives at /nix/var/nix/profiles/default/bin -
+        # this is NOT part of the Home Manager profile (~/.nix-profile/bin
+        # never contains `nix` itself, since Nix is a system-level install,
+        # not a home.packages entry), so it's added here explicitly,
+        # scoped to NIXON=1 only - unlike the rest of `.bashrc-nix`'s
+        # additions, nothing else re-adds this one, so without it a
+        # NIXON=1 shell would have no working `nix`/`nh`/`home-manager`.
+        # Confirmed as the root cause of a real `nh`/`nix --version`
+        # failure during `apply-dots`. This used to run unconditionally
+        # (regardless of NIXON), which is exactly why `nixoff` kept
+        # showing `/nix/var/nix/profiles/default/bin` on $PATH even after
+        # the environment-wipe rework above - moved inside this branch to
+        # fix that.
+        case ":$PATH:" in
+          *":/nix/var/nix/profiles/default/bin:"*) ;;
+          *) export PATH="$PATH:/nix/var/nix/profiles/default/bin" ;;
+        esac
+
         # Note: `.bashrc-nix` (pure Home Manager output, not authored by
         # this repo) unconditionally re-sources the `nix` package's own
         # `nix.sh` on its own line, in addition to `hm-session-vars.sh`
@@ -282,20 +346,13 @@ EOF
         # which would hide the underlying duplication instead of fixing it.
         [[ -f ~/.bashrc-nix ]] && . ~/.bashrc-nix
       else
-        # NON-NIX MODE: Pure host environment
-        #
-        # `grep -v "/nix"` alone does NOT catch `~/.nix-profile/bin` (the
-        # per-user Home Manager profile symlink, e.g.
-        # "/home/sp/.nix-profile/bin") - that path contains "/.nix-profile",
-        # not the literal substring "/nix" (there's a "." between the "/"
-        # and "nix"), so it silently survived the strip below, leaving the
-        # entire Home Manager package set on PATH even in "pure host"
-        # mode. Confirmed live: `nixoff` still showed `~/.nix-profile/bin`
-        # (duplicated) in `$PATH`. Excluding "nix-profile" as its own
-        # pattern (in addition to "/nix", which still correctly strips
-        # real `/nix/store/...`/`/nix/var/...` entries) fixes this.
-        export PATH=$(echo "$PATH" | tr ":" "\n" | grep -v -e "/nix" -e "nix-profile" | tr "\n" ":" | sed 's/:$//')
-        export PATH="$PATH:/nix/var/nix/profiles/default/bin"
+        # NON-NIX MODE: Pure host environment. No PATH stripping needed
+        # here anymore - `nixon`/`nixoff`'s default (`-`) and `--` modes
+        # already re-exec into a genuinely empty environment (`exec -c`),
+        # so this branch is reached with nothing nix-related on $PATH to
+        # begin with unless `+` mode (deliberately keep-everything) was
+        # used, in which case leaving prior nix state alone is the
+        # intended behavior for that mode.
         alias ls='ls --color=auto'
         if [ "$EUID" -eq 0 ]; then
           PS1='\[\e[31m\]\u@\h\[\e[0m\]:\[\e[32m\]\w\[\e[0m\]\$ '
@@ -411,6 +468,19 @@ EOF
       fi
       export GLOW_STYLE="dark"
       export GLOW_WIDTH="auto"
+
+      # --- 3. RESTORE PRESERVED/EXPLICIT VARS (must run last) ---
+      # `_nixon_toggle` hands off preserved/explicit vars via
+      # `_PRESERVE_<NAME>` shadow vars instead of the real names directly
+      # (see "THE NIXON GATEKEEPER" above), precisely so this rewrite -
+      # which runs after nix-loading above - always overwrites whatever
+      # `.bashrc-nix`/`hm-session-vars.sh` set, guaranteeing preserved/
+      # explicit vars win last, uniformly across `-`/`--`/`+`.
+      for _dots_preserved_var in "''${!_PRESERVE_@}"; do
+        export "''${_dots_preserved_var#_PRESERVE_}=''${!_dots_preserved_var}"
+        unset "$_dots_preserved_var"
+      done
+      unset _dots_preserved_var
     '';
   };
 
@@ -448,4 +518,5 @@ EOF
       } >> "$HOME/.profile"
     fi
   '';
+  };
 }

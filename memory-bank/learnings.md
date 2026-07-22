@@ -700,3 +700,33 @@ even though it looks like a normal login-shell test. To reliably test
 then grep the logged output - this is the only way that's been
 confirmed to actually trigger `.bashrc-nix`'s content during testing in
 this environment.
+
+**2026-07-22**: the Determinate Nix installer can install its
+"Nix"/"End Nix" `nix-daemon.sh`-sourcing block in MORE than one
+system file - on this host it was in BOTH `/etc/profile.d/nix.sh`
+(sourced by `/etc/profile` for every login shell) AND directly at the
+top of `/etc/bash.bashrc` (sourced by `/etc/profile`'s own
+`test -r /etc/bash.bashrc` line, for every INTERACTIVE shell). Only
+disabling the first one still leaves nix vars/PATH leaking into every
+interactive shell via the second. Both run before any
+`.profile-dots`/`.bashrc-dots` content ever gets a chance to, so no
+amount of dots-managed scrubbing can counteract them - always `grep -rl
+"nix-daemon\|/nix/var" /etc/` (or check both files directly) when
+diagnosing "clean env" complaints on a Determinate-Nix host, not just
+the more commonly-known `/etc/profile.d/nix.sh`.
+
+**2026-07-22**: the Nix-store-packaged `nix.sh` (the one
+`hm-session-vars.sh` sources, distinct from the system
+`nix-daemon.sh`) requires BOTH `$HOME` and `$USER` non-empty to do
+anything, and has NO re-entry-guard variable of its own (unlike the
+system `nix-daemon.sh`, which sets `__ETC_PROFILE_NIX_SOURCED`) - so a
+silent no-op (e.g. because `$HOME` hadn't been restored yet at that
+point in a shell-startup chain) is invisible except as an empty
+`NIX_PROFILES`/missing `~/.nix-profile/bin` on `PATH` afterward.
+Anything that hands off env vars across an `exec`/re-login boundary and
+needs `nix.sh`/`hm-session-vars.sh` to work correctly downstream MUST
+make `$HOME`/`$USER` genuinely set from the very start (not deferred to
+a "restore at the end" step) - confirmed by reproducing this exact
+failure with a shadow-var-only handoff design (`_nixon_toggle` in
+`modules/core/nixon.nix`), fixed by also passing preserved vars as
+direct real-name assigns alongside the shadow ones.
