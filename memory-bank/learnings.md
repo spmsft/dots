@@ -730,3 +730,22 @@ a "restore at the end" step) - confirmed by reproducing this exact
 failure with a shadow-var-only handoff design (`_nixon_toggle` in
 `modules/core/nixon.nix`), fixed by also passing preserved vars as
 direct real-name assigns alongside the shadow ones.
+
+## HOME/USER backfill needed for degenerate shell starts (env -i)
+
+`bash -l` never re-populates `$HOME`/`$USER` itself if they're unset in
+the inherited environment (e.g. `env -i bash -l`) - it only falls back
+to a passwd-db lookup *internally* for tilde (`~`) expansion when
+locating `~/.bash_profile` etc, so dots-managed rc files still get
+sourced even with both genuinely unset. This matters beyond cosmetics:
+`_nixon_toggle` (modules/core/nixon.nix) only hands a var off across its
+`exec -c` re-exec if it's currently *set* (`${!v+x}` test), so an unset
+`HOME`/`USER` at that point gets silently dropped from the handoff even
+though both are in `dotsLocal.nixonEnvAllowlist` - and the store-packaged
+`nix.sh` (sourced via `.profile-nix`) silently no-ops without both being
+non-empty (see the 2026-07-22 nixon/nixoff learnings entry above), so
+the failure is invisible except as a missing `~/.nix-profile/bin` on
+`$PATH`. Fixed by backfilling both from `getent passwd "$(id -u)"`/
+`id -un` near the very top of `.bashrc-dots`, before anything else runs,
+so every subsequent `nixon`/`nixoff` toggle in that shell always has a
+real value to capture and hand off.

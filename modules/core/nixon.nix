@@ -82,6 +82,26 @@ in
       if [ -z "''${NIXON+x}" ]; then export NIXON=${nixonDefaultStr}; fi
 
       # --- 0. SHELL FOUNDATIONS (Universal) ---
+      # Backfill HOME/USER from the passwd database if a shell somehow
+      # got here with either genuinely unset (e.g. `env -i bash -l` -
+      # bash itself never re-populates these two, it only falls back to
+      # a passwd-db lookup internally for tilde expansion when locating
+      # ~/.bash_profile etc, which is why we even got this far). This
+      # matters beyond cosmetics: `_nixon_toggle` below only hands a var
+      # off across its `exec -c` re-exec if it's currently *set*
+      # (`''${!v+x}`), and the store-packaged `nix.sh` (sourced via
+      # `.profile-nix`/`hm-session-vars.sh`) silently no-ops unless both
+      # are non-empty - so an unset HOME/USER here would otherwise
+      # silently propagate into every future `nixon`/`nixoff` re-exec,
+      # permanently breaking nix-loading for the rest of the session
+      # with no `~/.nix-profile/bin` on `$PATH` and no error message.
+      if [ -z "''${HOME:-}" ]; then
+        export HOME="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
+      fi
+      if [ -z "''${USER:-}" ]; then
+        export USER="$(id -un 2>/dev/null)"
+      fi
+
       # Fix TERM for remote/minimal environments before starting logic
       if [ -z "$TERM" ] || [ "$TERM" = "dumb" ]; then
         export TERM=xterm-256color
