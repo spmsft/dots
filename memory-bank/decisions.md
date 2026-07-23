@@ -2995,3 +2995,37 @@ and troubleshooting note to the new two-arg form.
 **Validation:** `bash -n setup.sh`, plus live runs of every argument
 path (no args, `--list`, distro-only, invalid distro) confirming correct
 usage/list/error output and exit codes.
+
+### 2026-07-23 — `vk` category rename + subtype front-matter tagging
+
+Renamed `vk`'s three top-level vault categories (per user request):
+`daily` → `records`, `literature` → `materials`, `permanent` → `texts`.
+Updated everywhere: vault scaffolding (`mkdir`, `index.md` welcome links -
+now includes all three, previously `daily`/`records` had no welcome-page
+link at all, an existing gap fixed in passing), `_quarto.yml` sidebar
+sections/globs, and the `note` subcommand's category chooser.
+
+Each category now also has a subtype, chosen right after the category in
+`vk note` → "Create Note", and recorded as a plain `type: <subtype>`
+front-matter field - deliberately NOT a subdirectory (`records`/
+`materials`/`texts` each stay a flat list of files, per explicit
+instruction: "Still present as flat list. Dont create sudirectories for
+subtypes, just tag in front-matter."):
+- `records`: note, event, observation
+- `materials`: quote, topic, source, entity, project (topic/entity/
+  project added in follow-up requests in the same session; "concept"
+  renamed to "topic" per explicit follow-up)
+- `texts`: article, guide, hub
+
+`records` notes always get a full `date: YYYY-MM-DD HH:MM` timestamp in
+the header (not just a date) - daily-log-style entries are
+time-sensitive, per explicit instruction ("new pages always with time
+stamp in header"). `materials`/`texts` keep the previous date-only
+stamp.
+
+**Validation:** `bash -n`, full `activationPackage` build, inspected the
+final generated `vk` script content directly from the Nix store, and a
+manual smoke test of the frontmatter-generation logic for both a
+`records`/`event` note (confirmed timestamp) and a `materials`/`quote`
+note (confirmed date-only) - both produced the expected `type`/`date`
+front-matter shape.

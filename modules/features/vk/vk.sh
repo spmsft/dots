@@ -128,7 +128,7 @@ case "${1:-}" in
             echo "Error: Vault already exists." && exit 1
         fi
 
-        mkdir -p "$VAULT_PATH"/{permanent,literature,daily,_extensions}
+        mkdir -p "$VAULT_PATH"/{texts,materials,records,_extensions}
 
         # 1. Generate Base Index Configuration
         cat <<NOTEEOF > "$VAULT_PATH/index.md"
@@ -137,10 +137,11 @@ title: "Index // $VAULT_NAME"
 ---
 # Welcome to your Knowledge Base
 
-- [[permanent/index.md|Permanent Notes]]
-- [[literature/index.md|Literature Notes]]
+- [[texts/index.md|Texts]]
+- [[materials/index.md|Materials]]
+- [[records/index.md|Records]]
 NOTEEOF
-        touch "$VAULT_PATH/permanent/index.md" "$VAULT_PATH/literature/index.md"
+        touch "$VAULT_PATH/texts/index.md" "$VAULT_PATH/materials/index.md" "$VAULT_PATH/records/index.md"
 
         # 2. Generate Quarto Config
         cat <<QUARTOEOF > "$VAULT_PATH/_quarto.yml"
@@ -156,12 +157,12 @@ website:
     search: true
     contents:
       - index.md
-      - section: "Permanent"
-        contents: "permanent/*.md"
-      - section: "Literature"
-        contents: "literature/*.md"
-      - section: "Daily"
-        contents: "daily/*.md"
+      - section: "Texts"
+        contents: "texts/*.md"
+      - section: "Materials"
+        contents: "materials/*.md"
+      - section: "Records"
+        contents: "records/*.md"
 
 format:
   html:
@@ -190,17 +191,35 @@ QUARTOEOF
 
         case "$ACTION" in
             "Create Note")
-                CAT=$("$GUM_BIN" choose "permanent" "literature" "daily")
+                CAT=$("$GUM_BIN" choose "records" "materials" "texts")
+                # Subtype is a front-matter tag only - records/materials/
+                # texts each stay a flat list of files, no subtype
+                # subdirectories.
+                case "$CAT" in
+                    records) TYPE=$("$GUM_BIN" choose "note" "event" "observation") ;;
+                    materials) TYPE=$("$GUM_BIN" choose "quote" "topic" "source" "entity" "project") ;;
+                    texts) TYPE=$("$GUM_BIN" choose "article" "guide" "hub") ;;
+                esac
                 TITLE=$("$GUM_BIN" input --placeholder "Note filename (e.g., compiler_optimizations)...")
                 if [ -z "$TITLE" ]; then exit 1; fi
                 FILE="$CAT/${TITLE%.md}.md"
+                # records are time-sensitive (daily-log-style entries) -
+                # always stamp the full date+time in the header, not just
+                # the date, unlike materials/texts.
+                if [ "$CAT" = "records" ]; then
+                    DATE_STAMP=$(date '+%Y-%m-%d %H:%M')
+                else
+                    DATE_STAMP=$(date +%Y-%m-%d)
+                fi
                 cat <<NOTEEOF > "$FILE"
 ---
 title: "${TITLE//_/ }"
-date: $(date +%Y-%m-%d)
+type: $TYPE
+date: $DATE_STAMP
 ---
 
 # ${TITLE//_/ }
+
 
 NOTEEOF
                 "$HX_BIN" "$FILE"
