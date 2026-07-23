@@ -43,10 +43,11 @@ cd_vault() {
 # --flag=value forms) out of the remaining CLI args, for 'watch' and
 # 'serve-all'. Anything left over is collected into POSITIONAL[] (e.g.
 # the vault name for 'watch') so flags can be given in any order, before
-# or after the vault name. Left unset, PORT/BIND stay empty and dufs
-# falls back to its own defaults (0.0.0.0:5000) - never hardcoded here.
+# or after the vault name. PORT defaults to 5050 (vk's own default, not
+# dufs' built-in 5000) unless overridden; BIND stays empty and falls
+# back to dufs' own default (0.0.0.0) when unset.
 parse_serve_flags() {
-    PORT=""
+    PORT="5050"
     BIND=""
     POSITIONAL=()
     while [ $# -gt 0 ]; do
@@ -85,9 +86,10 @@ build_dufs_args() {
 }
 
 # Helper: the URL dufs will actually be reachable at, given PORT/BIND
-# (falling back to dufs' own defaults, 0.0.0.0:5000, when unset).
+# (PORT defaults to 5050 via parse_serve_flags; BIND falls back to
+# dufs' own default, 0.0.0.0, when unset).
 dufs_url() {
-    echo "http://${BIND:-0.0.0.0}:${PORT:-5000}"
+    echo "http://${BIND:-0.0.0.0}:${PORT:-5050}"
 }
 
 # Helper: substring/fuzzy content search over $1 (a directory - either "."
@@ -131,8 +133,8 @@ Usage:
 [vault] may be omitted anywhere it's accepted - vk will prompt via gum.
 -p/--port and -b/--bind (aliases: --host) are passed straight through to
 dufs; both may also be given as --port=VALUE/--bind=VALUE, in any order,
-before or after the vault name. Left unset, dufs uses its own defaults
-(0.0.0.0:5000).
+before or after the vault name. Left unset, vk defaults to port 5050
+(bind falls back to dufs' own default, 0.0.0.0).
 USAGEEOF
 }
 

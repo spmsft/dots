@@ -3114,3 +3114,17 @@ event).
 activation, and a manual dry-run against a throwaway vault (`mv` +
 `sed` + git commit) confirming both `index.md` and `_quarto.yml` end up
 with the new name and the vault's own git log records the rename.
+
+### 2026-07-23 — `vk` default port changed to 5050
+
+Changed `parse_serve_flags`'s `PORT` default from empty (previously
+relying on dufs' own built-in default, 0.0.0.0:5000) to `"5050"`, an
+explicit vk-level default always passed to dufs via `--port`. `BIND`
+stays empty/unset, still falling back to dufs' own bind default
+(0.0.0.0). Updated `dufs_url()`'s fallback and `print_usage`'s text to
+match. Affects `vk watch` and `vk serve-all` (both use
+`parse_serve_flags`/`build_dufs_args`/`dufs_url`).
+
+**Validation:** `bash -n`, full `activationPackage` build + live
+activation, confirmed the generated script's `PORT="5050"` default and
+`dufs_url()` fallback.
