@@ -3250,3 +3250,66 @@ activation; manually backfilled `~/Vaults/az` (`main.md` + updated
 `index.md`) and confirmed via `quarto render` that the rendered
 `index.html` shows the included `# az` h1 with no "Welcome" text,
 immediately followed by the Materials/Records/Texts links.
+
+### 2026-07-23 — `serve-all` auto-builds/rebuilds on *any* change, per-category note listings, real `wikilinks.lua` multi-token fix
+
+`serve-all`'s watch loop previously only re-rendered the root
+index/global-pages and re-symlinked *already-built* vaults - it never
+built a brand-new never-built vault, nor rebuilt a vault whose own
+notes changed. Fixed:
+
+- Added `vault_needs_build()`: true if a vault has no `_site` yet, or
+  any source file (excluding `_site`/`.quarto`/`site_libs`/`.git`) is
+  newer than its `_site` output.
+- `serve_all_rebuild()` now loops over every real vault and (re)builds
+  it via `quarto render` whenever `vault_needs_build()` says so, before
+  recomputing BUILT/UNBUILT - so new/edited notes, brand-new vaults,
+  and removed vaults are all picked up automatically on the next poll,
+  with no manual `vk build` step. UNBUILT now only means "failed to
+  build" (message text updated accordingly).
+
+Also added real per-category note listings and fixed a second,
+independent `wikilinks.lua` bug found while testing this:
+
+- Each category's `index.md` (`materials`/`records`/`texts`) is now
+  regenerated (via `regen_category_index()`) as an actual alphabetical
+  listing of every note inside it - title from the note's own front
+  matter (falling back to the filename) - instead of the empty file
+  `vk new` used to touch into existence. Only rewrites when content
+  actually differs (`cmp -s` first), so an unrelated poll never
+  spuriously bumps the file's mtime and falsely triggers
+  `vault_needs_build()` every 3 seconds. Wired into `cd_vault()` (every
+  vk command touching a vault refreshes it) and into
+  `serve_all_rebuild()`'s per-vault loop (which reaches vaults without
+  going through `cd_vault()`).
+- Dropped the "Index // " prefix from `index.md`'s title (now just the
+  vault name); updated `vk rename`'s sed pattern to match.
+- **Found and fixed a real, previously-shipped `wikilinks.lua` bug**:
+  the filter matched against a single Pandoc `Str` AST node, but
+  Pandoc's parser splits a `[[target|display]]` wikilink into several
+  separate `Str`/`Space`/`SoftBreak` nodes whenever the target or
+  display text contains a space (e.g. any note title with more than
+  one word) - so the filter silently never fired for those, printing
+  literal brackets. This only went unnoticed earlier because the
+  session's only previously-rendered links (`Materials`/`Records`/
+  `Texts`) happened to be single words. Rewrote the filter to operate
+  on the whole `Inlines` run instead of one `Str` at a time: it
+  flattens a run of plain `Str`/`Space`/`SoftBreak` inlines back into a
+  string, scans it for `[[...]]` spans (splitting on the first `|` to
+  separate target/display), resolves each into a real `pandoc.Link`,
+  and reconstructs any surrounding plain text - correctly handling
+  spaces and multiple/mixed piped+plain links within the same line.
+  Any other inline type (`Emph`, `Code`, an actual `Link`, ...) breaks
+  the accumulated run, so this still only recognizes wikilinks written
+  as plain text, not nested inside other markup.
+
+**Validation:** `bash -n`, full `activationPackage` build + live
+activation. Live end-to-end test via `vk serve-all` on a throwaway
+port: force-deleted `az`'s `_site` and created a brand-new
+never-built vault, confirmed both auto-built on the next poll and both
+appeared in the root index; edited `texts/index.md`'s generated
+listing and confirmed real links (`Agentic Coding Tools`,
+`WAVE gitconfig` - both multi-word titles) render as working `<a href>`
+tags instead of literal `[[...]]` text; confirmed root `index.md`'s
+title now reads just the vault name. Synced the same fixes into
+`~/Vaults/az`'s own git repo. Cleaned up all test artifacts afterward.

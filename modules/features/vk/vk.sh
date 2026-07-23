@@ -54,6 +54,55 @@ ensure_main_md() {
     fi
 }
 
+# Helper: (re)generate one category's own index.md as an actual listing
+# of every note inside it (title from the note's own front matter,
+# falling back to the filename when a note has none), sorted
+# alphabetically by that title - rather than the empty file 'vk new'
+# touches into existence at vault-creation time. Writes only when the
+# generated content actually differs, so an unrelated call (e.g. from
+# serve-all's polling loop) doesn't spuriously bump this file's mtime
+# and trigger vault_needs_build() to rebuild the vault every single
+# poll even when nothing really changed.
+regen_category_index() {
+    local dir="$1" title="$2"
+    local f base note_title tmp
+    tmp=$(mktemp)
+    {
+        echo '---'
+        echo "title: \"$title\""
+        echo '---'
+        echo
+        echo "# $title"
+        echo
+        for f in "$dir"/*.md; do
+            [ -e "$f" ] || continue
+            base=$(basename "$f")
+            [ "$base" = "index.md" ] && continue
+            note_title=$(grep -m1 '^title:' "$f" 2>/dev/null | sed -E 's/^title:[[:space:]]*"?//; s/"?[[:space:]]*$//')
+            [ -z "$note_title" ] && note_title="${base%.md}"
+            printf '%s\t%s\n' "$note_title" "$base"
+        done | sort | while IFS=$'\t' read -r note_title base; do
+            echo "- [[$base|$note_title]]"
+        done
+    } > "$tmp"
+    if ! cmp -s "$tmp" "$dir/index.md" 2>/dev/null; then
+        mv "$tmp" "$dir/index.md"
+    else
+        rm -f "$tmp"
+    fi
+}
+
+# Helper: regenerate all three of a vault's category listings
+# (materials/records/texts). Called from cd_vault() (so every vk command
+# that touches a vault refreshes them) and from serve_all_rebuild()'s
+# per-vault loop (which reaches vaults without going through cd_vault).
+regen_category_indexes() {
+    local vault_path="$1"
+    regen_category_index "$vault_path/materials" "Materials"
+    regen_category_index "$vault_path/records" "Records"
+    regen_category_index "$vault_path/texts" "Texts"
+}
+
 # Helper: cd into an existing vault, or fail with a clear message instead
 # of a bare "set -e" exit from a failed cd.
 cd_vault() {
@@ -68,6 +117,7 @@ cd_vault() {
         exit 1
     fi
     ensure_main_md "$path" "$name"
+    regen_category_indexes "$path"
     cd "$path"
 }
 
@@ -145,19 +195,36 @@ search_content() {
     "$HX_BIN" "$file:$line"
 }
 
+# Helper: does vault $1 (a path) have any source file newer than its
+# own _site output, or no _site at all yet? Drives serve-all's
+# automatic per-vault rebuild-on-change - excludes quarto's own
+# generated/cache dirs (and .git) from the comparison so a stale _site
+# doesn't "self-trigger" a rebuild forever once one has run.
+vault_needs_build() {
+    local path="$1"
+    [ -d "$path/_site" ] || return 0
+    find "$path" -mindepth 1 \
+        \( -path "$path/_site" -o -path "$path/.quarto" -o -path "$path/site_libs" -o -path "$path/.git" \) -prune -o \
+        -type f -newer "$path/_site" -print -quit 2>/dev/null | grep -q .
+}
+
 # Helper: (re)generate the Vaults-root itself as a small quarto project
 # for 'vk serve-all' - its own _quarto.yml + index.md (fully re-derived
 # every call) plus a render of every top-level *.md page there
 # (imprint.md and any other global page the user drops in
 # $VAULTS_DIR - e.g. about.md, changelog.md - are all discovered and
-# rendered generically, not just imprint.md specifically), and refreshes
-# the per-vault _site symlinks. Called once up front and then repeatedly
-# from serve-all's background watch loop (pass quiet=1 there to suppress
-# quarto's normally-verbose render log and the unbuilt-vaults warning on
-# every poll).
+# rendered generically, not just imprint.md specifically). Also builds
+# (or rebuilds, on any source-file change - see vault_needs_build())
+# every real vault automatically, then refreshes the per-vault _site
+# symlinks - so the whole thing picks up *any* change (new/edited
+# notes, brand-new never-built vaults, removed vaults, global
+# pages/assets) with no manual 'vk build' step. Called once up front
+# and then repeatedly from serve-all's background watch loop (pass
+# quiet=1 there to suppress quarto's normally-verbose render log and
+# per-vault build failures on every poll).
 serve_all_rebuild() {
     local quiet="${1:-0}"
-    local name bn disp f
+    local name bn disp f path
 
     mkdir -p "$VAULTS_DIR/assets"
     if [ ! -f "$VAULTS_DIR/imprint.md" ]; then
@@ -194,6 +261,29 @@ QUARTOEOF
     while IFS= read -r name; do
         [ -n "$name" ] && all_vaults+=("$name")
     done < <(list_vaults)
+
+    # Build (or rebuild, if any of its own source files changed since
+    # its last render) every real vault automatically. This is the
+    # step that makes serve-all's background loop pick up *any* change
+    # rather than just newly-appearing global pages/assets at the
+    # Vaults root - a note edit, a brand-new never-built vault, etc.
+    # all get (re)rendered on the next poll with no manual 'vk build'.
+    for name in "${all_vaults[@]}"; do
+        path="$VAULTS_DIR/$name"
+        # Regenerate category listings first (a note added/removed since
+        # the last poll counts as "a source file changed" too) - only
+        # actually rewrites index.md when content differs, so this alone
+        # never spuriously triggers vault_needs_build() below.
+        regen_category_indexes "$path"
+        if vault_needs_build "$path"; then
+            if [ "$quiet" = "1" ]; then
+                (cd "$path" && "$QUARTO_BIN" render >/dev/null 2>&1) || true
+            else
+                (cd "$path" && "$QUARTO_BIN" render >/dev/null) ||
+                    echo "⚠ Failed to build vault '$name' - see 'vk build $name' for details" >&2
+            fi
+        fi
+    done
 
     BUILT=()
     UNBUILT=()
@@ -232,9 +322,9 @@ QUARTOEOF
         done
         if [ "${#UNBUILT[@]}" -gt 0 ]; then
             echo
-            echo '## Not Yet Built'
+            echo '## Failed to Build'
             echo
-            echo "Run \`vk build <vault>\` for each of these to make them reachable here:"
+            echo "These vaults have a build error - see \`vk build <vault>\` for details:"
             echo
             for name in "${UNBUILT[@]}"; do
                 echo "- $name"
@@ -274,7 +364,7 @@ QUARTOEOF
     done
 
     if [ "$quiet" != "1" ] && [ "${#UNBUILT[@]}" -gt 0 ]; then
-        echo "⚠ Not yet built, run 'vk build <vault>' first: ${UNBUILT[*]}" >&2
+        echo "⚠ Failed to build (see 'vk build <vault>'): ${UNBUILT[*]}" >&2
     fi
 }
 
@@ -329,7 +419,7 @@ case "${1:-}" in
         # category list.
         cat <<NOTEEOF > "$VAULT_PATH/index.md"
 ---
-title: "Index // $VAULT_NAME"
+title: "$VAULT_NAME"
 ---
 {{< include main.md >}}
 
@@ -502,7 +592,7 @@ NOTEEOF
         # bare mv would otherwise leave the rendered site/index still
         # showing the old name.
         if [ -f "$NEW_PATH/index.md" ]; then
-            sed -i "s/^title: \"Index \/\/ .*\"/title: \"Index \/\/ $NEW_NAME\"/" "$NEW_PATH/index.md"
+            sed -i "s/^title: \".*\"/title: \"$NEW_NAME\"/" "$NEW_PATH/index.md"
         fi
         if [ -f "$NEW_PATH/_quarto.yml" ]; then
             sed -i "s/^  title: \".*\"/  title: \"$NEW_NAME\"/" "$NEW_PATH/_quarto.yml"
