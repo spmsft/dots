@@ -90,6 +90,24 @@ dufs_url() {
     echo "http://${BIND:-0.0.0.0}:${PORT:-5000}"
 }
 
+# Helper: substring/fuzzy content search over $1 (a directory - either "."
+# from inside an already-cd'd vault, or $VAULTS_DIR for a global,
+# cross-vault search), shared by 'vk search' and 'vk note's "Fuzzy Search
+# Text". Passing the search root straight to rg (rather than cd-ing into
+# it) means the paths rg prints are always valid from the caller's cwd -
+# required for the global case, which runs before any cd_vault.
+search_content() {
+    local root="$1"
+    local placeholder="${2:-Search body content...}"
+    local selection
+    selection=$("$RG_BIN" --line-number --no-heading --color=always --glob '!_site/**' --glob '!_extensions/**' . "$root" | "$GUM_BIN" filter --ansi --placeholder "$placeholder")
+    if [ -z "$selection" ]; then exit 1; fi
+    local file line
+    file=$(echo "$selection" | cut -d: -f1)
+    line=$(echo "$selection" | cut -d: -f2)
+    "$HX_BIN" "$file:$line"
+}
+
 print_usage() {
     cat <<USAGEEOF
 vk - Terminal-first wiki & Zettelkasten engine
@@ -97,6 +115,7 @@ vk - Terminal-first wiki & Zettelkasten engine
 Usage:
   vk new                                    Create a new vault (interactive)
   vk note [vault]                           Create/edit/delete/search notes (interactive)
+  vk search [vault|all]                     Substring-search one vault, or every vault at once
   vk watch [vault] [-p|--port PORT] [-b|--bind ADDR]
                                              Live Quarto preview + dufs server
   vk build [vault] [file PATH] [-p|--port PORT] [-b|--bind ADDR]
@@ -238,18 +257,27 @@ NOTEEOF
                 ;;
 
             "Fuzzy Search Text")
-                # Structural content discovery via ripgrep pipeline mapped
-                # into a helix target sequence ("file:line" - hx jumps
-                # straight to that line). _site/ is a git-ignored build
-                # tree, but rg doesn't know that outside a git repo
-                # context, so it's excluded explicitly too.
-                SELECTION=$("$RG_BIN" --line-number --no-heading --color=always --glob '!_site/**' . | "$GUM_BIN" filter --ansi --placeholder "Search body content...")
-                if [ -z "$SELECTION" ]; then exit 1; fi
-                FILE=$(echo "$SELECTION" | cut -d: -f1)
-                LINE=$(echo "$SELECTION" | cut -d: -f2)
-                "$HX_BIN" "$FILE:$LINE"
+                search_content "." "Search $VAULT_NAME..."
                 ;;
         esac
+        ;;
+
+    search)
+        TARGET="${2:-}"
+        if [ -z "$TARGET" ]; then
+            if [ -d "$VAULTS_DIR" ] && [ -n "$(ls -A "$VAULTS_DIR" 2>/dev/null)" ]; then
+                TARGET=$( { echo "All vaults"; ls "$VAULTS_DIR"; } | "$GUM_BIN" choose --header "Search scope:")
+            else
+                echo "No vaults found." >&2
+                exit 1
+            fi
+        fi
+        if [ "$TARGET" = "All vaults" ] || [ "$TARGET" = "all" ] || [ "$TARGET" = "--all" ]; then
+            search_content "$VAULTS_DIR" "Search all vaults..."
+        else
+            cd_vault "$TARGET"
+            search_content "." "Search $TARGET..."
+        fi
         ;;
 
     watch)
@@ -297,7 +325,7 @@ NOTEEOF
             exit 1
         fi
         echo "Interactive CLI Management Hub"
-        ACTION=$("$GUM_BIN" choose "new (Create Vault)" "note (CRUD Operations)" "watch (Live Edit Preview)" "serve-all (Host Hub)")
+        ACTION=$("$GUM_BIN" choose "new (Create Vault)" "note (CRUD Operations)" "search (Find Across Vaults)" "watch (Live Edit Preview)" "serve-all (Host Hub)")
         CMD=$(echo "$ACTION" | cut -d' ' -f1)
         exec "$0" "$CMD"
         ;;

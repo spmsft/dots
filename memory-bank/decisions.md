@@ -3029,3 +3029,36 @@ manual smoke test of the frontmatter-generation logic for both a
 `records`/`event` note (confirmed timestamp) and a `materials`/`quote`
 note (confirmed date-only) - both produced the expected `type`/`date`
 front-matter shape.
+
+### 2026-07-23 — `vk search` command (global + per-vault substring search)
+
+User asked whether `vk` can already host all vaults at once, and whether
+it can grow a global + per-vault substring search.
+
+- **Hosting all vaults at once**: already existed via `vk serve-all` (one
+  dufs instance rooted at `$VAULTS_DIR`, each vault's rendered `_site/`
+  reachable at `/<vault>/_site/`) - no code change needed, just confirmed
+  and explained to the user (each vault needs a `vk build` first so
+  there's a `_site/` for dufs to serve).
+- **Search**: previously only existed as "Fuzzy Search Text" buried in
+  `vk note`'s interactive menu, and only ever scoped to the single vault
+  already `cd_vault`'d into - no cross-vault option existed.
+  - Factored the rg → gum filter → hx pipeline into a shared
+    `search_content <root> <placeholder>` helper. Passing the search root
+    straight through to `rg` (rather than `cd`-ing into it first) keeps
+    the returned `path:line` targets valid for `hx` regardless of the
+    caller's cwd - required for the global case, which runs before any
+    `cd_vault`.
+  - `vk note`'s "Fuzzy Search Text" now just calls `search_content "."`.
+  - Added a new top-level `vk search [vault|all]` command: with no arg,
+    prompts via gum for "All vaults" or a specific vault name; `all`/
+    `--all` also selects the global scope explicitly. Global search runs
+    against `$VAULTS_DIR` directly; per-vault search `cd_vault`s first
+    then searches `.`, identical to the `note` submenu's behavior.
+  - Added to `print_usage` and the top-level interactive hub menu.
+
+**Validation:** `bash -n`, full `activationPackage` build + live
+activation, and a manual rg smoke test confirming both root-scoping
+modes (`rg ... $VAULTS_DIR` for global, `rg ... .` after cd for
+per-vault) produce clean `path:line:content` output compatible with the
+existing `cut -d: -f1/-f2` + `hx file:line` handling.
