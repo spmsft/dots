@@ -3161,3 +3161,92 @@ the real `~/Vaults/az` vault with `quarto render`, ran `vk serve-all -p
 generated vault-index HTML and `/az/` serves the vault's actual
 rendered `index.html` with no `_site` in the URL. Cleaned up the test
 server and the vault's build artifacts afterward.
+
+### 2026-07-23 — `wikilinks.lua` piped-link bug fix + markdown-driven `serve-all` index + `list_vaults()`
+
+Found and fixed a real, previously-shipped bug in `wikilinks.lua`: the
+plain `[[target]]` pattern was tried *before* the piped
+`[[target|display]]` pattern. Lua's non-greedy `.-` still matches
+through to the *first* trailing `]]` it can find, and since a plain
+`[[target|display]]` link has no earlier `]]` to stop at, the plain
+pattern always "won" first, swallowing the whole `target|display`
+string as the link target (e.g. rendering `records/index.md|Records`
+as literal link text instead of `Records`). Fixed by trying the piped
+pattern first, falling back to plain only when it doesn't match.
+
+Also, this session:
+- Added `modules/features/vk/imprint.md` (a stub Imprint page, seeded
+  once per vault and once into `$VAULTS_DIR` root - never overwritten
+  afterward) and wired `IMPRINT_MD_SRC` into `vk.nix`'s preamble.
+- `vk new`'s `index.md`/`_quarto.yml` templates now list
+  materials/records/texts alphabetically (matching every other vk
+  listing), and `_quarto.yml` gained a `page-footer` Imprint link.
+  Quarto resolves an absolute-root link like `/imprint.html` relative
+  to *each project's own root*, not a single global filesystem root -
+  so every vault needs its own local `imprint.md` for this to work
+  both standalone and nested under `serve-all`.
+- Added `list_vaults()`: a real vault is any `$VAULTS_DIR` subdirectory
+  owning its own `_quarto.yml`. Rewired `get_vault()` and `vk search`'s
+  scope picker to use it, since `serve-all` now writes its own
+  `_site`/`index.md`/`imprint.md`/`_quarto.yml` directly inside
+  `$VAULTS_DIR`, which a naive `ls "$VAULTS_DIR"` glob would otherwise
+  misidentify as vaults.
+- `serve-all`'s root index is now generated from real Markdown
+  (`$VAULTS_DIR/index.md`, rendered via `quarto render`) instead of
+  hand-rolled HTML, so `/` gets the same cosmo theme/CSS/page-footer as
+  every vault. Quarto's single-file render doesn't cascade to other
+  top-level `.md` files in the same project, so `imprint.md` needed
+  its own explicit `quarto render imprint.md` call.
+
+**Validation:** `bash -n`, full `activationPackage` build + live
+activation, live re-render of `~/Vaults/az` confirming clean link text
+(`Materials`/`Records`/`Texts`) and correct `.html` hrefs, and a
+throwaway-fake-vaults dry run (`_quarto.yml`-owning vs not) confirming
+`list_vaults()`'s filtering.
+
+### 2026-07-23 — Per-vault/root `assets/`, all-global-`.md` pages, `serve-all` watch loop
+
+- `vk new` now creates a per-vault `assets/` directory, and both the
+  per-vault and root `_quarto.yml` templates declare
+  `resources: - assets/**` so quarto copies the whole directory into
+  `_site` verbatim regardless of whether every file in it happens to
+  be referenced from a page.
+- Generalized `serve-all`'s "render imprint.md specially" into a
+  `GLOBAL_PAGES` loop: every top-level `*.md` file in `$VAULTS_DIR`
+  except `index.md` is discovered, rendered individually (quarto
+  doesn't cascade renders across sibling top-level pages), and listed
+  alphabetically under a new "## Pages" section of the generated root
+  `index.md` (Imprint keeps its dedicated `page-footer` link too).
+- Factored `serve-all`'s whole rebuild body out of the inline case
+  into `serve_all_rebuild(quiet)`, called once verbosely at startup
+  and then repeatedly (quietly, `|| true`-guarded) from a background
+  `while true; do sleep 3; serve_all_rebuild 1; done &` loop, whose PID
+  is killed via `trap ... EXIT` (mirroring `vk watch`'s existing
+  `Q_PID` pattern) - so `serve-all` now picks up newly built vaults,
+  new/edited global pages, and asset changes without needing a
+  restart.
+
+**Validation:** `bash -n`, full `activationPackage` build + live
+activation, live `vk serve-all -p 5098` run confirming the root
+`_quarto.yml`/`index.md` regenerate correctly and quarto renders
+`index.md` cleanly; cleaned up test artifacts (test assets, test global
+page) afterward.
+
+### 2026-07-23 — Per-vault `main.md` as the live landing-page lead-in
+
+Each vault now has its own `main.md`: free-form, hand-edited content
+that's never regenerated once created. `ensure_main_md()` seeds it
+(just the vault name as an `# h1`) whenever missing - called both from
+`vk new` and from `cd_vault()` (so any pre-existing vault gets
+backfilled the next time any vk command touches it, not just brand-new
+ones). `index.md`'s template now opens with `{{< include main.md >}}`
+instead of a hardcoded "Welcome to your Knowledge Base" header, so
+edits to `main.md` show up on the landing page immediately on rebuild
+with no need to touch `index.md` again - followed by the unchanged
+one-link-per-category list (materials/records/texts).
+
+**Validation:** `bash -n`, full `activationPackage` build + live
+activation; manually backfilled `~/Vaults/az` (`main.md` + updated
+`index.md`) and confirmed via `quarto render` that the rendered
+`index.html` shows the included `# az` h1 with no "Welcome" text,
+immediately followed by the Materials/Records/Texts links.

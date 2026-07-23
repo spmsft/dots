@@ -13,9 +13,15 @@
 -- just a relative path as far as this filter is concerned - it gets the
 -- same ".md -> .html" rewrite and passes straight through.
 function Str(el)
-  local target, display = string.match(el.text, "%[%[(.-)%]%]")
+  -- Try the more specific piped form first - the plain form's pattern
+  -- ("%[%[(.-)%]%]") would otherwise greedily match straight through to
+  -- the final "]]" on a piped link too (Lua's "-" is non-greedy but
+  -- there's no earlier "]]" to stop at), swallowing "target|display"
+  -- whole as the target and never reaching the piped branch at all.
+  local target, display = string.match(el.text, "%[%[(.-)|(.-)%]%]")
   if not target then
-    target, display = string.match(el.text, "%[%[(.-)|(.-)%]%]")
+    target = string.match(el.text, "%[%[(.-)%]%]")
+    display = nil
   end
 
   if target then

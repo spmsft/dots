@@ -27,6 +27,7 @@ let
     #!/usr/bin/env bash
     VAULTS_DIR="${cfg.vaultsDir}"
     WIKILINKS_LUA_SRC="${./vk/wikilinks.lua}"
+    IMPRINT_MD_SRC="${./vk/imprint.md}"
     GUM_BIN="${pkgs.gum}/bin/gum"
     HX_BIN="${pkgs.helix}/bin/hx"
     QUARTO_BIN="${pkgs.quarto}/bin/quarto"

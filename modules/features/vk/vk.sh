@@ -10,17 +10,48 @@ set -euo pipefail
 
 mkdir -p "$VAULTS_DIR"
 
+# Helper: list every real vault's name, one per line, sorted
+# alphabetically. A "real" vault is any $VAULTS_DIR subdirectory that
+# owns its own _quarto.yml (written by 'vk new') - this deliberately
+# excludes $VAULTS_DIR's own root-project artifacts ('vk serve-all'
+# regenerates _site/, site_libs/, .quarto/, index.md, imprint.md and
+# _quarto.yml directly inside $VAULTS_DIR itself, none of which are
+# vaults) from ever appearing in a vault picker or listing.
+list_vaults() {
+    local v name
+    for v in "$VAULTS_DIR"/*/; do
+        v="${v%/}"
+        [ -f "$v/_quarto.yml" ] || continue
+        name=$(basename "$v")
+        echo "$name"
+    done | sort
+}
+
 # Helper: Ensure vault argument or select interactively via gum.
 get_vault() {
     local name="${1:-}"
     if [ -z "$name" ]; then
-        if [ -d "$VAULTS_DIR" ] && [ -n "$(ls -A "$VAULTS_DIR" 2>/dev/null)" ]; then
-            name=$(ls "$VAULTS_DIR" | "$GUM_BIN" choose --header "Select target vault:")
+        local vaults
+        vaults=$(list_vaults)
+        if [ -n "$vaults" ]; then
+            name=$(echo "$vaults" | "$GUM_BIN" choose --header "Select target vault:")
         else
             name=$("$GUM_BIN" input --placeholder "No vaults found. Enter name for a new vault:")
         fi
     fi
     echo "$name"
+}
+
+# Helper: ensure a vault has its own main.md - the free-form, hand-edited
+# landing-page content that index.md includes via a quarto shortcode
+# (see 'new' and index.md's template below). Only ever generated when
+# missing (never overwritten), seeded with just the vault name as an h1
+# so there's something for index.md to include right away.
+ensure_main_md() {
+    local path="$1" name="$2"
+    if [ ! -f "$path/main.md" ]; then
+        echo "# $name" > "$path/main.md"
+    fi
 }
 
 # Helper: cd into an existing vault, or fail with a clear message instead
@@ -36,6 +67,7 @@ cd_vault() {
         echo "Error: vault '$name' does not exist at $path (use 'vk new' first)." >&2
         exit 1
     fi
+    ensure_main_md "$path" "$name"
     cd "$path"
 }
 
@@ -105,12 +137,145 @@ search_content() {
     # gum >=0.14 dropped the old --ansi flag in favor of --strip-ansi/
     # --no-strip-ansi (default: don't strip), so no flag is needed here
     # to preserve rg's --color=always highlighting.
-    selection=$("$RG_BIN" --line-number --no-heading --color=always --glob '!_site/**' --glob '!_extensions/**' . "$root" | "$GUM_BIN" filter --placeholder "$placeholder")
+    selection=$("$RG_BIN" --line-number --no-heading --color=always --glob '!_site/**' --glob '!_extensions/**' --glob '!site_libs/**' --glob '!.quarto/**' . "$root" | "$GUM_BIN" filter --placeholder "$placeholder")
     if [ -z "$selection" ]; then exit 1; fi
     local file line
     file=$(echo "$selection" | cut -d: -f1)
     line=$(echo "$selection" | cut -d: -f2)
     "$HX_BIN" "$file:$line"
+}
+
+# Helper: (re)generate the Vaults-root itself as a small quarto project
+# for 'vk serve-all' - its own _quarto.yml + index.md (fully re-derived
+# every call) plus a render of every top-level *.md page there
+# (imprint.md and any other global page the user drops in
+# $VAULTS_DIR - e.g. about.md, changelog.md - are all discovered and
+# rendered generically, not just imprint.md specifically), and refreshes
+# the per-vault _site symlinks. Called once up front and then repeatedly
+# from serve-all's background watch loop (pass quiet=1 there to suppress
+# quarto's normally-verbose render log and the unbuilt-vaults warning on
+# every poll).
+serve_all_rebuild() {
+    local quiet="${1:-0}"
+    local name bn disp f
+
+    mkdir -p "$VAULTS_DIR/assets"
+    if [ ! -f "$VAULTS_DIR/imprint.md" ]; then
+        cp "$IMPRINT_MD_SRC" "$VAULTS_DIR/imprint.md"
+    fi
+
+    # `resources: assets/**` copies $VAULTS_DIR/assets verbatim into
+    # _site/assets, regardless of whether every file in it is actually
+    # referenced from a rendered page.
+    cat <<QUARTOEOF > "$VAULTS_DIR/_quarto.yml"
+project:
+  type: website
+  output-dir: _site
+  resources:
+    - assets/**
+
+website:
+  title: "Vaults"
+  search: true
+  page-footer:
+    right: "[Imprint](/imprint.html)"
+
+format:
+  html:
+    theme: cosmo
+    toc: false
+    code-fold: true
+QUARTOEOF
+
+    # Real vaults: subdirectories owning their own _quarto.yml.
+    # list_vaults() is already sorted alphabetically, so splitting it
+    # below preserves that order without a separate sort pass.
+    local all_vaults=()
+    while IFS= read -r name; do
+        [ -n "$name" ] && all_vaults+=("$name")
+    done < <(list_vaults)
+
+    BUILT=()
+    UNBUILT=()
+    for name in "${all_vaults[@]}"; do
+        if [ -d "$VAULTS_DIR/$name/_site" ]; then
+            BUILT+=("$name")
+        else
+            UNBUILT+=("$name")
+        fi
+    done
+
+    # Every top-level *.md file except the generated index.md itself is
+    # a "global page" - rendered and linked from the root index, in
+    # addition to imprint.md's dedicated footer link. Sorted
+    # alphabetically like every other vk listing.
+    GLOBAL_PAGES=()
+    for f in "$VAULTS_DIR"/*.md; do
+        [ -e "$f" ] || continue
+        bn=$(basename "$f")
+        [ "$bn" = "index.md" ] && continue
+        GLOBAL_PAGES+=("$bn")
+    done
+    if [ "${#GLOBAL_PAGES[@]}" -gt 0 ]; then
+        mapfile -t GLOBAL_PAGES < <(printf '%s\n' "${GLOBAL_PAGES[@]}" | sort)
+    fi
+
+    {
+        echo '---'
+        echo 'title: "Vaults"'
+        echo '---'
+        echo
+        echo '# All Vaults'
+        echo
+        for name in "${BUILT[@]}"; do
+            echo "- [$name](/$name/)"
+        done
+        if [ "${#UNBUILT[@]}" -gt 0 ]; then
+            echo
+            echo '## Not Yet Built'
+            echo
+            echo "Run \`vk build <vault>\` for each of these to make them reachable here:"
+            echo
+            for name in "${UNBUILT[@]}"; do
+                echo "- $name"
+            done
+        fi
+        if [ "${#GLOBAL_PAGES[@]}" -gt 0 ]; then
+            echo
+            echo '## Pages'
+            echo
+            for bn in "${GLOBAL_PAGES[@]}"; do
+                disp="${bn%.md}"
+                disp="${disp//_/ }"
+                echo "- [$disp](/${bn%.md}.html)"
+            done
+        fi
+    } > "$VAULTS_DIR/index.md"
+
+    if [ "$quiet" = "1" ]; then
+        (cd "$VAULTS_DIR" && "$QUARTO_BIN" render index.md >/dev/null 2>&1) || true
+        for bn in "${GLOBAL_PAGES[@]}"; do
+            (cd "$VAULTS_DIR" && "$QUARTO_BIN" render "$bn" >/dev/null 2>&1) || true
+        done
+    else
+        (cd "$VAULTS_DIR" && "$QUARTO_BIN" render index.md >/dev/null)
+        for bn in "${GLOBAL_PAGES[@]}"; do
+            (cd "$VAULTS_DIR" && "$QUARTO_BIN" render "$bn" >/dev/null)
+        done
+    fi
+
+    # Symlink each built vault's _site into the just-rendered root
+    # _site, named after the vault itself (so "/<vault-name>/" serves it
+    # directly, no /_site suffix needed) - drop any stale symlinks first
+    # (e.g. a vault renamed/removed since the last rebuild).
+    find "$VAULTS_DIR/_site" -maxdepth 1 -type l -delete
+    for name in "${BUILT[@]}"; do
+        ln -s "$VAULTS_DIR/$name/_site" "$VAULTS_DIR/_site/$name"
+    done
+
+    if [ "$quiet" != "1" ] && [ "${#UNBUILT[@]}" -gt 0 ]; then
+        echo "⚠ Not yet built, run 'vk build <vault>' first: ${UNBUILT[*]}" >&2
+    fi
 }
 
 print_usage() {
@@ -153,26 +318,41 @@ case "${1:-}" in
             echo "Error: Vault already exists." && exit 1
         fi
 
-        mkdir -p "$VAULT_PATH"/{texts,materials,records,_extensions}
+        mkdir -p "$VAULT_PATH"/{texts,materials,records,_extensions,assets}
+        ensure_main_md "$VAULT_PATH" "$VAULT_NAME"
 
-        # 1. Generate Base Index Configuration
+        # 1. Generate Base Index Configuration (categories listed
+        # alphabetically, like every other listing in vk). The landing
+        # page starts with main.md's hand-edited content (included live
+        # via quarto's shortcode, so later edits to main.md show up
+        # without regenerating index.md), followed by the one-link-per-
+        # category list.
         cat <<NOTEEOF > "$VAULT_PATH/index.md"
 ---
 title: "Index // $VAULT_NAME"
 ---
-# Welcome to your Knowledge Base
+{{< include main.md >}}
 
-- [[texts/index.md|Texts]]
 - [[materials/index.md|Materials]]
 - [[records/index.md|Records]]
+- [[texts/index.md|Texts]]
 NOTEEOF
         touch "$VAULT_PATH/texts/index.md" "$VAULT_PATH/materials/index.md" "$VAULT_PATH/records/index.md"
 
-        # 2. Generate Quarto Config
+        # 2. Generate Quarto Config (sidebar sections alphabetical too).
+        # page-footer's Imprint link is an absolute path - it only
+        # resolves when this vault is reached through 'vk serve-all'
+        # (which also renders the Vaults-root project's own imprint.md
+        # at that same absolute path), not when a vault's _site is
+        # opened standalone. `resources: assets/**` copies the vault's
+        # own assets/ dir into _site verbatim regardless of whether
+        # every file in it happens to be referenced from a page.
         cat <<QUARTOEOF > "$VAULT_PATH/_quarto.yml"
 project:
   type: website
   output-dir: _site
+  resources:
+    - assets/**
 
 website:
   title: "$VAULT_NAME"
@@ -182,12 +362,14 @@ website:
     search: true
     contents:
       - index.md
-      - section: "Texts"
-        contents: "texts/*.md"
       - section: "Materials"
         contents: "materials/*.md"
       - section: "Records"
         contents: "records/*.md"
+      - section: "Texts"
+        contents: "texts/*.md"
+  page-footer:
+    right: "[Imprint](/imprint.html)"
 
 format:
   html:
@@ -201,8 +383,11 @@ QUARTOEOF
 
         # 3. Install the AST Lua filter (shared, static - not regenerated
         # per-vault from a heredoc, so every vault always gets the exact
-        # same, already-tested filter).
+        # same, already-tested filter), and seed a per-vault Imprint stub
+        # (only written once, at vault creation - never overwritten by vk
+        # afterwards, since it's meant to be hand-edited).
         cp "$WIKILINKS_LUA_SRC" "$VAULT_PATH/wikilinks.lua"
+        cp "$IMPRINT_MD_SRC" "$VAULT_PATH/imprint.md"
 
         (cd "$VAULT_PATH" && "$GIT_BIN" init -q && echo "_site/" > .gitignore && "$GIT_BIN" add . && "$GIT_BIN" commit -q -m "Init vault")
         echo "✓ Vault initialized successfully at $VAULT_PATH"
@@ -216,13 +401,13 @@ QUARTOEOF
 
         case "$ACTION" in
             "Create Note")
-                CAT=$("$GUM_BIN" choose "records" "materials" "texts")
+                CAT=$("$GUM_BIN" choose "materials" "records" "texts")
                 # Subtype is a front-matter tag only - records/materials/
                 # texts each stay a flat list of files, no subtype
-                # subdirectories.
+                # subdirectories. All choices listed alphabetically.
                 case "$CAT" in
-                    records) TYPE=$("$GUM_BIN" choose "note" "event" "observation") ;;
-                    materials) TYPE=$("$GUM_BIN" choose "quote" "topic" "source" "entity" "project") ;;
+                    records) TYPE=$("$GUM_BIN" choose "event" "note" "observation") ;;
+                    materials) TYPE=$("$GUM_BIN" choose "entity" "project" "quote" "source" "topic") ;;
                     texts) TYPE=$("$GUM_BIN" choose "article" "guide" "hub") ;;
                 esac
                 TITLE=$("$GUM_BIN" input --placeholder "Note filename (e.g., compiler_optimizations)...")
@@ -271,8 +456,9 @@ NOTEEOF
     search)
         TARGET="${2:-}"
         if [ -z "$TARGET" ]; then
-            if [ -d "$VAULTS_DIR" ] && [ -n "$(ls -A "$VAULTS_DIR" 2>/dev/null)" ]; then
-                TARGET=$( { echo "All vaults"; ls "$VAULTS_DIR"; } | "$GUM_BIN" choose --header "Search scope:")
+            VAULTS_LIST=$(list_vaults)
+            if [ -n "$VAULTS_LIST" ]; then
+                TARGET=$( { echo "All vaults"; echo "$VAULTS_LIST"; } | "$GUM_BIN" choose --header "Search scope:")
             else
                 echo "No vaults found." >&2
                 exit 1
@@ -362,46 +548,20 @@ NOTEEOF
         parse_serve_flags "$@"
         build_dufs_args
 
-        # dufs serves one flat directory tree as-is, which would expose
-        # each vault's raw internals (records/materials/texts/_site/...)
-        # at the root and require a /_site suffix per vault. Instead,
-        # stage a throwaway directory containing one symlink per *built*
-        # vault - named after the vault, pointing straight at its _site
-        # (so "/<vault-name>/" serves that vault's rendered site with no
-        # /_site needed) - plus a generated index.html linking all of
-        # them, and serve that staging directory instead. --allow-symlink
-        # is required since the symlink targets live outside STAGE_DIR.
-        STAGE_DIR=$(mktemp -d)
-        trap 'rm -rf "$STAGE_DIR"' EXIT
-
-        shopt -s nullglob
-        VAULT_DIRS=("$VAULTS_DIR"/*/)
-        shopt -u nullglob
-
-        UNBUILT=()
-        {
-            echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>vk - All Vaults</title></head><body>'
-            echo '<h1>Vaults</h1><ul>'
-            for v in "${VAULT_DIRS[@]}"; do
-                v="${v%/}"
-                NAME=$(basename "$v")
-                if [ -d "$v/_site" ]; then
-                    ln -s "$v/_site" "$STAGE_DIR/$NAME"
-                    echo "<li><a href=\"/$NAME/\">$NAME</a></li>"
-                else
-                    UNBUILT+=("$NAME")
-                fi
+        serve_all_rebuild
+        echo "👀 Watching $VAULTS_DIR for global page/asset changes and newly built vaults..."
+        (
+            while true; do
+                sleep 3
+                serve_all_rebuild 1
             done
-            echo '</ul></body></html>'
-        } > "$STAGE_DIR/index.html"
-
-        if [ "${#UNBUILT[@]}" -gt 0 ]; then
-            echo "⚠ Not yet built, run 'vk build <vault>' first: ${UNBUILT[*]}" >&2
-        fi
+        ) &
+        REBUILD_LOOP_PID=$!
+        trap 'kill "$REBUILD_LOOP_PID" 2>/dev/null || true' EXIT
 
         echo "⚡ Active multi-vault core instance running at $(dufs_url)"
         echo "Access paths via: $(dufs_url)/<vault-name>/"
-        "$DUFS_BIN" "$STAGE_DIR" --render-index --allow-symlink -A "${DUFS_ARGS[@]}"
+        "$DUFS_BIN" "$VAULTS_DIR/_site" --render-index --allow-symlink -A "${DUFS_ARGS[@]}"
         ;;
 
     *)
