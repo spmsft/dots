@@ -3062,3 +3062,30 @@ activation, and a manual rg smoke test confirming both root-scoping
 modes (`rg ... $VAULTS_DIR` for global, `rg ... .` after cd for
 per-vault) produce clean `path:line:content` output compatible with the
 existing `cut -d: -f1/-f2` + `hx file:line` handling.
+
+### 2026-07-23 — Migrated existing vault + fixed `gum filter --ansi` bug
+
+Migrated the only existing live vault (`~/Vaults/az`) from the old
+`permanent`/`literature`/`daily` layout to the new `texts`/`materials`/
+`records` layout (via `git mv` inside the vault's own git repo, so
+history/renames are preserved): `permanent` → `texts`, `literature` →
+`materials`, `daily` → `records` (was empty, recreated fresh with an
+`index.md` placeholder since git doesn't track empty dirs to `git mv`).
+Regenerated `index.md` and `_quarto.yml` to the current template's
+section names/order. Added `type: guide` front-matter to the two
+pre-existing `texts` notes (Agentic Coding Tools, WAVE gitconfig) - they
+predate the subtype scheme so had no `type:` field; "guide" was chosen
+as the closest fit (practical how-to/reference notes) and can be
+retagged later if a different subtype fits better. Committed inside the
+vault's own repo, separate from the dots repo history.
+
+While smoke-testing `vk search` against this migrated vault, found
+`gum filter --ansi` is no longer a valid flag on the installed gum
+0.17.0 (replaced by `--strip-ansi`/`--no-strip-ansi`, not-stripping by
+default) - `search_content()`'s pipeline was erroring with "unknown
+flag --ansi" on every invocation. Fixed by dropping the flag entirely
+(rg's `--color=always` output already displays fine unstripped by
+default). This bug predates this session's `search_content` refactor
+(it was in the original inline "Fuzzy Search Text" block) but only
+surfaced now because it was never exercised end-to-end with a real gum
+binary before.

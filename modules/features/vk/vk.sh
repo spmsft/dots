@@ -100,7 +100,10 @@ search_content() {
     local root="$1"
     local placeholder="${2:-Search body content...}"
     local selection
-    selection=$("$RG_BIN" --line-number --no-heading --color=always --glob '!_site/**' --glob '!_extensions/**' . "$root" | "$GUM_BIN" filter --ansi --placeholder "$placeholder")
+    # gum >=0.14 dropped the old --ansi flag in favor of --strip-ansi/
+    # --no-strip-ansi (default: don't strip), so no flag is needed here
+    # to preserve rg's --color=always highlighting.
+    selection=$("$RG_BIN" --line-number --no-heading --color=always --glob '!_site/**' --glob '!_extensions/**' . "$root" | "$GUM_BIN" filter --placeholder "$placeholder")
     if [ -z "$selection" ]; then exit 1; fi
     local file line
     file=$(echo "$selection" | cut -d: -f1)
