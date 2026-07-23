@@ -3089,3 +3089,28 @@ default). This bug predates this session's `search_content` refactor
 (it was in the original inline "Fuzzy Search Text" block) but only
 surfaced now because it was never exercised end-to-end with a real gum
 binary before.
+
+### 2026-07-23 — `vk rename` command
+
+User asked whether renaming a vault by just renaming its directory is
+sufficient. Answer: functionally yes - every call site (`get_vault`/
+`cd_vault`/`watch`/`build`/`serve-all`) resolves a vault purely by its
+directory name under `$VAULTS_DIR` at runtime; there's no separate
+registry file to keep in sync. But `index.md`'s title
+(`"Index // $VAULT_NAME"`) and `_quarto.yml`'s `website.title` are baked
+in verbatim at `vk new` time and never re-derived afterwards, so a bare
+`mv` leaves the rendered site/index cosmetically showing the old name.
+
+Added `vk rename [old] [new]` (also in the interactive hub menu): moves
+`$VAULTS_DIR/<old>` -> `$VAULTS_DIR/<new>` (a plain `mv`, so `.git`
+history moves with it), then `sed`-patches the two baked-in title
+strings in the new location, and commits the change inside the vault's
+own git repo (if one exists) with an `--allow-empty` commit (covers the
+case where only the two title strings changed and content diff is
+otherwise a no-op, plus records the rename itself as a discrete git
+event).
+
+**Validation:** `bash -n`, full `activationPackage` build + live
+activation, and a manual dry-run against a throwaway vault (`mv` +
+`sed` + git commit) confirming both `index.md` and `_quarto.yml` end up
+with the new name and the vault's own git log records the rename.

@@ -119,6 +119,7 @@ Usage:
   vk new                                    Create a new vault (interactive)
   vk note [vault]                           Create/edit/delete/search notes (interactive)
   vk search [vault|all]                     Substring-search one vault, or every vault at once
+  vk rename [old] [new]                     Rename a vault (dir + baked-in title strings)
   vk watch [vault] [-p|--port PORT] [-b|--bind ADDR]
                                              Live Quarto preview + dufs server
   vk build [vault] [file PATH] [-p|--port PORT] [-b|--bind ADDR]
@@ -283,6 +284,48 @@ NOTEEOF
         fi
         ;;
 
+    rename)
+        OLD_NAME=$(get_vault "${2:-}")
+        OLD_PATH="$VAULTS_DIR/$OLD_NAME"
+        if [ ! -d "$OLD_PATH" ]; then
+            echo "Error: vault '$OLD_NAME' does not exist at $OLD_PATH." >&2
+            exit 1
+        fi
+        NEW_NAME="${3:-}"
+        if [ -z "$NEW_NAME" ]; then
+            NEW_NAME=$("$GUM_BIN" input --placeholder "New name for '$OLD_NAME'...")
+        fi
+        if [ -z "$NEW_NAME" ]; then exit 1; fi
+        NEW_PATH="$VAULTS_DIR/$NEW_NAME"
+        if [ -d "$NEW_PATH" ]; then
+            echo "Error: a vault named '$NEW_NAME' already exists." >&2
+            exit 1
+        fi
+
+        # A vault is identified purely by its directory name at every
+        # call site (get_vault/cd_vault/watch/build/serve-all all resolve
+        # $VAULTS_DIR/<dirname> at runtime, no separate registry file) -
+        # so a plain directory move is sufficient to make vk itself
+        # recognize the vault under its new name, .git history included.
+        mv "$OLD_PATH" "$NEW_PATH"
+
+        # index.md's title and _quarto.yml's website.title are baked in
+        # verbatim at 'vk new' time and never re-derived afterwards - a
+        # bare mv would otherwise leave the rendered site/index still
+        # showing the old name.
+        if [ -f "$NEW_PATH/index.md" ]; then
+            sed -i "s/^title: \"Index \/\/ .*\"/title: \"Index \/\/ $NEW_NAME\"/" "$NEW_PATH/index.md"
+        fi
+        if [ -f "$NEW_PATH/_quarto.yml" ]; then
+            sed -i "s/^  title: \".*\"/  title: \"$NEW_NAME\"/" "$NEW_PATH/_quarto.yml"
+        fi
+
+        if [ -d "$NEW_PATH/.git" ]; then
+            (cd "$NEW_PATH" && "$GIT_BIN" add -A && "$GIT_BIN" commit -q -m "Rename vault: $OLD_NAME -> $NEW_NAME" --allow-empty)
+        fi
+        echo "✓ Renamed vault '$OLD_NAME' to '$NEW_NAME' at $NEW_PATH"
+        ;;
+
     watch)
         shift
         parse_serve_flags "$@"
@@ -328,7 +371,7 @@ NOTEEOF
             exit 1
         fi
         echo "Interactive CLI Management Hub"
-        ACTION=$("$GUM_BIN" choose "new (Create Vault)" "note (CRUD Operations)" "search (Find Across Vaults)" "watch (Live Edit Preview)" "serve-all (Host Hub)")
+        ACTION=$("$GUM_BIN" choose "new (Create Vault)" "note (CRUD Operations)" "search (Find Across Vaults)" "rename (Rename Vault)" "watch (Live Edit Preview)" "serve-all (Host Hub)")
         CMD=$(echo "$ACTION" | cut -d' ' -f1)
         exec "$0" "$CMD"
         ;;
