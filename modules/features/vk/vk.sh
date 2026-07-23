@@ -127,7 +127,7 @@ Usage:
   vk build [vault] [file PATH] [-p|--port PORT] [-b|--bind ADDR]
                                              Render the vault (or a single file) with Quarto
   vk serve-all [-p|--port PORT] [-b|--bind ADDR]
-                                             Serve every vault's _site/ under one dufs instance
+                                             Host all vaults at once: / lists them, /<vault> serves it
   vk help | -h | --help                     Show this message
 
 [vault] may be omitted anywhere it's accepted - vk will prompt via gum.
@@ -361,9 +361,47 @@ NOTEEOF
         shift
         parse_serve_flags "$@"
         build_dufs_args
+
+        # dufs serves one flat directory tree as-is, which would expose
+        # each vault's raw internals (records/materials/texts/_site/...)
+        # at the root and require a /_site suffix per vault. Instead,
+        # stage a throwaway directory containing one symlink per *built*
+        # vault - named after the vault, pointing straight at its _site
+        # (so "/<vault-name>/" serves that vault's rendered site with no
+        # /_site needed) - plus a generated index.html linking all of
+        # them, and serve that staging directory instead. --allow-symlink
+        # is required since the symlink targets live outside STAGE_DIR.
+        STAGE_DIR=$(mktemp -d)
+        trap 'rm -rf "$STAGE_DIR"' EXIT
+
+        shopt -s nullglob
+        VAULT_DIRS=("$VAULTS_DIR"/*/)
+        shopt -u nullglob
+
+        UNBUILT=()
+        {
+            echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>vk - All Vaults</title></head><body>'
+            echo '<h1>Vaults</h1><ul>'
+            for v in "${VAULT_DIRS[@]}"; do
+                v="${v%/}"
+                NAME=$(basename "$v")
+                if [ -d "$v/_site" ]; then
+                    ln -s "$v/_site" "$STAGE_DIR/$NAME"
+                    echo "<li><a href=\"/$NAME/\">$NAME</a></li>"
+                else
+                    UNBUILT+=("$NAME")
+                fi
+            done
+            echo '</ul></body></html>'
+        } > "$STAGE_DIR/index.html"
+
+        if [ "${#UNBUILT[@]}" -gt 0 ]; then
+            echo "⚠ Not yet built, run 'vk build <vault>' first: ${UNBUILT[*]}" >&2
+        fi
+
         echo "⚡ Active multi-vault core instance running at $(dufs_url)"
-        echo "Access paths via: $(dufs_url)/<vault-name>/_site/"
-        "$DUFS_BIN" "$VAULTS_DIR" --render-index -A "${DUFS_ARGS[@]}"
+        echo "Access paths via: $(dufs_url)/<vault-name>/"
+        "$DUFS_BIN" "$STAGE_DIR" --render-index --allow-symlink -A "${DUFS_ARGS[@]}"
         ;;
 
     *)

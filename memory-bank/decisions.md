@@ -3128,3 +3128,36 @@ match. Affects `vk watch` and `vk serve-all` (both use
 **Validation:** `bash -n`, full `activationPackage` build + live
 activation, confirmed the generated script's `PORT="5050"` default and
 `dufs_url()` fallback.
+
+### 2026-07-23 — `vk serve-all` rewritten: clean `/` index + `/<vault>` URLs
+
+Previous `serve-all` pointed dufs straight at `$VAULTS_DIR`, exposing
+each vault's raw internals (`records`/`materials`/`texts`/`_site`/...)
+at the root, with vaults only reachable at `/<vault>/_site/`.
+
+Rewritten to stage a throwaway `mktemp -d` directory (cleaned up via
+`trap ... EXIT`) containing:
+- one symlink per vault that has a built `_site` (named after the
+  vault itself, pointing straight at `<vault>/_site`) - so
+  `/<vault-name>/` now serves that vault's rendered site directly, no
+  `/_site` suffix needed;
+- a generated `index.html` listing links to every built vault, so `/`
+  is a clean index instead of a raw directory listing of vault
+  internals.
+
+Vaults with no `_site` yet (never `vk build`'t) are skipped from both
+the symlinks and the index, and reported via a stderr warning
+suggesting `vk build <vault>`.
+
+`--allow-symlink` is now passed to dufs (in addition to `-A`), required
+since the staged symlink targets live outside the staging directory
+dufs is rooted at.
+
+**Validation:** `bash -n`, full `activationPackage` build + live
+activation, a standalone dry-run of the staging logic against fake
+vault dirs (built + unbuilt), and a full live end-to-end test: rendered
+the real `~/Vaults/az` vault with `quarto render`, ran `vk serve-all -p
+5099` in the background, and confirmed via `curl` that `/` returns the
+generated vault-index HTML and `/az/` serves the vault's actual
+rendered `index.html` with no `_site` in the URL. Cleaned up the test
+server and the vault's build artifacts afterward.
