@@ -46,7 +46,8 @@ let
   vkScript = pkgs.writeShellScriptBin "vk" (''
     #!/usr/bin/env bash
     VAULTS_DIR="${cfg.vaultsDir}"
-    WIKILINKS_LUA_SRC="${./vk/wikilinks.lua}"
+    VK_FILTERS_SRC_DIR="${./vk/filters}"
+    VK_SHORTCODES_SRC_DIR="${./vk/shortcodes}"
     IMPRINT_MD_SRC="${./vk/imprint.md}"
     GUM_BIN="${pkgs.gum}/bin/gum"
     HX_BIN="${pkgs.helix}/bin/hx"

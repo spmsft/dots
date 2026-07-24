@@ -3433,3 +3433,84 @@ directly and grepped it for both generated `alias -- markitdown='uvx
 markitdown'` / `alias -- trafilatura='uvx trafilatura'` lines; live
 activation + `bash -ic 'type markitdown; type trafilatura'` confirmed
 both resolve correctly in a real interactive shell.
+
+### 2026-07-24 — vk-managed Lua filters/shortcodes (`VK_FILTERS_SRC_DIR`/`VK_SHORTCODES_SRC_DIR`)
+
+Generalized the previously-hardcoded `wikilinks.lua` wiring into a
+two-tier system so vk itself owns, installs, and keeps every vault in
+sync with a growing set of Quarto Lua filters/shortcode extensions,
+using the taskwarrior integration sketch as the first worked example
+beyond `wikilinks.lua`:
+
+- **Plain whole-document AST filters** (transform the whole Pandoc AST,
+  e.g. `wikilinks.lua`) live in `modules/features/vk/filters/*.lua`,
+  copied to each vault's root, and referenced from that vault's
+  `_quarto.yml`'s `format.html.filters:` list.
+- **Shortcode extensions** (`{{< name args >}}` syntax, e.g. the new
+  `taskwarrior` one) live in `modules/features/vk/shortcodes/<name>/`
+  (each its own `_extension.yml` + implementation `.lua`), copied
+  wholesale into the vault's `_extensions/<name>/` - Quarto
+  auto-discovers these with zero `_quarto.yml` wiring needed.
+
+`vk.nix` exposes the two directories wholesale as
+`VK_FILTERS_SRC_DIR`/`VK_SHORTCODES_SRC_DIR` (replacing the old, single
+`WIKILINKS_LUA_SRC` file reference), so dropping a new filter or
+shortcode-extension directory into either location is automatically
+picked up with no further `vk.nix`/`vk.sh` changes. `vk.sh` gained
+`sync_vk_filters()` (diff-guarded copy of every filter/shortcode into a
+vault, using the same `cmp -s` guard as `regen_category_index()` - a
+plain unconditional `cp` would bump destination mtimes on every call
+even when content is unchanged, causing `vault_needs_build()`'s
+mtime-based check to spuriously rebuild forever from `serve-all`'s poll
+loop) and `ensure_quarto_filters_yml()` (idempotently keeps a filter
+listed under `_quarto.yml`'s `format.html.filters:`, a no-op if already
+present). Both are called from `cd_vault()` (so any vk command
+backfills an older vault) and from `serve_all_rebuild()`'s per-vault
+loop (before the `vault_needs_build()` check), and from `vk new`'s
+vault-creation path.
+
+**Shortcodes are architecturally distinct from plain filters**: a bare
+`filters:` entry in `_quarto.yml` does NOT enable `{{< name args >}}`
+syntax - shortcodes must be packaged as a Quarto extension
+(`_extension.yml` with `contributes.shortcodes: [file.lua]`) under
+`_extensions/<name>/`; no `quarto add`/network call is needed, a
+correctly-structured local directory is auto-discovered. A shortcode
+function's signature is `function(args, kwargs, meta)`, where each
+`args[i]` is `pandoc.Inlines` (parsed Markdown), not a plain string -
+use `pandoc.utils.stringify()`.
+
+**`taskwarrior.lua`** (`{{< task-table <task-filter-args> >}}`)
+shells out to `task <args> export`, JSON-decodes via
+`require("pandoc.json")`, and returns a raw HTML `<table>`
+(`pandoc.RawBlock("html", ...)`) rather than a native `pandoc.Table`
+built via `pandoc.read()` on a generated Markdown table string (Gemini's
+original sketch) - the latter triggers a real Quarto-internal bug
+(`filters/modules/jog.lua:173: Don't know how to traverse TableBody`,
+its crossref-numbering walker choking on native Pandoc Table AST nodes
+returned from a shortcode) that spams on every render, even though
+output is still correct. Since every vk vault's `_quarto.yml` only ever
+defines `format.html:`, building raw HTML directly sidesteps the bug
+with no functional loss. `RawBlock` content is emitted verbatim/
+unescaped, so all user-supplied text (task descriptions) is manually
+HTML-escaped via a small `html_escape()` helper. JSON numbers decode as
+Lua floats (`item.id` came back `1.0`) - reformatted via
+`string.format("%d", ...)`. The `task` binary is a soft dependency
+(`os.execute("command -v task ...")` check with a graceful fallback
+message), matching the `uvx`/MarkItDown soft-dependency pattern - not
+added to `home.packages` by `vk.nix` itself; `suites.pim-apps.taskwarrior`
+(default-on, provides `pkgs.taskwarrior3`) is the intended real-world
+source.
+
+**Validation:** `bash -n`; full `activationPackage` build + live
+activation. End-to-end verified via a PTY-driving Python harness
+(`gum`'s TUI prompts need a real `/dev/tty`): `vk new` on a fresh vault
+correctly installed `wikilinks.lua` at vault root, correctly
+back-filled `_quarto.yml`'s formerly-empty `filters:` list via
+`ensure_quarto_filters_yml()`, and correctly installed
+`_extensions/taskwarrior/`; deleting both from an existing vault and
+running any vk command that calls `cd_vault()` (e.g. `vk note`)
+correctly re-backfilled them. Seeded real Taskwarrior data (including a
+pipe-containing description) and `quarto render`'d a note with
+`{{< task-table >}}` - clean render, no `jog.lua` errors, correct
+integer IDs, correct date reformatting, correct pipe/HTML-escaping.
+Cleaned up all scratch vaults/taskdata/PTY harness scripts afterward.

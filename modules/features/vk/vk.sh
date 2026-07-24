@@ -3,9 +3,10 @@
 #
 # The Nix-level preamble (modules/features/vk.nix) resolves every external
 # binary this script needs into the *_BIN variables below, and sets
-# VAULTS_DIR/WIKILINKS_LUA_SRC before sourcing this file - keeping this
-# static, shellcheck-able body free of any Nix syntax (mirrors the
-# viewer.nix/clipboard.nix pattern: small Nix preamble + real shell file).
+# VAULTS_DIR/VK_FILTERS_SRC_DIR/VK_SHORTCODES_SRC_DIR before sourcing
+# this file - keeping this static, shellcheck-able body free of any Nix
+# syntax (mirrors the viewer.nix/clipboard.nix pattern: small Nix
+# preamble + real shell file).
 set -euo pipefail
 
 mkdir -p "$VAULTS_DIR"
@@ -53,6 +54,69 @@ ensure_main_md() {
     local path="$1"
     if [ ! -f "$path/main.md" ]; then
         : > "$path/main.md"
+    fi
+}
+
+# Helper: (re)install every vk-managed Lua filter/shortcode into vault
+# $1 - unlike main.md/imprint.md (only seeded if missing, since those
+# are meant to be hand-edited), these are vk-owned script files never
+# meant to be hand-edited in a vault, so a vk.sh upgrade should always
+# propagate to every existing vault on next use. Each file is
+# compared before writing (see the cmp -s guard below) rather than
+# unconditionally cp'd, purely to avoid bumping mtimes when nothing
+# actually changed - see that guard's own comment for why that matters.
+#
+# Two different kinds, mirroring how quarto itself distinguishes them:
+#   - Plain whole-document AST filters (VK_FILTERS_SRC_DIR/*.lua, e.g.
+#     wikilinks.lua) are copied to the vault root and referenced via
+#     _quarto.yml's format.html.filters: list - ensure_quarto_filters_yml()
+#     (below) keeps that list in sync idempotently.
+#   - Shortcode extensions (VK_SHORTCODES_SRC_DIR/*/, e.g.
+#     shortcodes/taskwarrior/) are quarto extensions proper (their own
+#     _extension.yml + .lua), copied wholesale into the vault's
+#     _extensions/<name>/ - quarto auto-discovers any shortcode
+#     extension present there, no _quarto.yml wiring needed at all.
+sync_vk_filters() {
+    local path="$1"
+    local filter_src filter_base shortcode_dir shortcode_base f rel
+    mkdir -p "$path/_extensions"
+    for filter_src in "$VK_FILTERS_SRC_DIR"/*.lua; do
+        [ -e "$filter_src" ] || continue
+        filter_base=$(basename "$filter_src")
+        # cmp -s guard before writing - a plain unconditional `cp` would
+        # bump the destination's mtime on every call even when content
+        # is unchanged, which would make vault_needs_build() (mtime-
+        # based) think the vault changed on *every single* serve-all
+        # poll, rebuilding forever (the same class of bug already fixed
+        # once for regen_category_index()/root index.md - see
+        # memory-bank/decisions.md's 2026-07-23 entries).
+        cmp -s "$filter_src" "$path/$filter_base" 2>/dev/null || cp "$filter_src" "$path/$filter_base"
+        ensure_quarto_filters_yml "$path" "$filter_base"
+    done
+    for shortcode_dir in "$VK_SHORTCODES_SRC_DIR"/*/; do
+        [ -d "$shortcode_dir" ] || continue
+        shortcode_base=$(basename "$shortcode_dir")
+        mkdir -p "$path/_extensions/$shortcode_base"
+        while IFS= read -r -d '' f; do
+            rel="${f#"$shortcode_dir"}"
+            cmp -s "$f" "$path/_extensions/$shortcode_base/$rel" 2>/dev/null || \
+                cp "$f" "$path/_extensions/$shortcode_base/$rel"
+        done < <(find "$shortcode_dir" -type f -print0)
+    done
+}
+
+# Helper: ensure _quarto.yml at $1 lists filter $2 under
+# format.html.filters: - idempotent (no-op if already listed), and a
+# no-op entirely if the vault has no _quarto.yml yet (shouldn't happen
+# in practice - 'vk new' always writes one before ever calling
+# sync_vk_filters(), but this guards against a partially-initialized
+# vault directory).
+ensure_quarto_filters_yml() {
+    local quarto_yml="$1/_quarto.yml" filter_base="$2"
+    [ -f "$quarto_yml" ] || return 0
+    grep -qxF "      - $filter_base" "$quarto_yml" && return 0
+    if grep -qx "    filters:" "$quarto_yml"; then
+        sed -i "/^    filters:\$/a\\      - $filter_base" "$quarto_yml"
     fi
 }
 
@@ -121,6 +185,7 @@ cd_vault() {
     fi
     ensure_main_md "$path"
     regen_category_indexes "$path"
+    sync_vk_filters "$path"
     cd "$path"
 }
 
@@ -410,6 +475,12 @@ QUARTOEOF
         # actually rewrites index.md when content differs, so this alone
         # never spuriously triggers vault_needs_build() below.
         regen_category_indexes "$path"
+        # Keep filters/shortcodes current too (a vk.sh upgrade that adds
+        # or changes one should reach already-running vaults on the next
+        # poll, not just brand-new 'vk new' vaults) - cheap, unconditional
+        # file copies, so no mtime-guard needed here (unlike
+        # regen_category_indexes's cmp -s check above).
+        sync_vk_filters "$path"
         if vault_needs_build "$path"; then
             if [ "$quiet" = "1" ]; then
                 (cd "$path" && "$QUARTO_BIN" render >/dev/null 2>&1) || true
@@ -605,15 +676,17 @@ format:
     toc-location: right
     code-fold: true
     filters:
-      - wikilinks.lua
 QUARTOEOF
 
-        # 3. Install the AST Lua filter (shared, static - not regenerated
-        # per-vault from a heredoc, so every vault always gets the exact
-        # same, already-tested filter), and seed a per-vault Imprint stub
-        # (only written once, at vault creation - never overwritten by vk
-        # afterwards, since it's meant to be hand-edited).
-        cp "$WIKILINKS_LUA_SRC" "$VAULT_PATH/wikilinks.lua"
+        # 3. Install every vk-managed filter/shortcode (shared, static -
+        # not regenerated per-vault from a heredoc, so every vault always
+        # gets the exact same, already-tested set - see sync_vk_filters()
+        # for how the plain-filter/shortcode-extension distinction works
+        # and how it back-fills format.html.filters: above), and seed a
+        # per-vault Imprint stub (only written once, at vault creation -
+        # never overwritten by vk afterwards, since it's meant to be
+        # hand-edited).
+        sync_vk_filters "$VAULT_PATH"
         cp "$IMPRINT_MD_SRC" "$VAULT_PATH/imprint.md"
 
         (cd "$VAULT_PATH" && "$GIT_BIN" init -q && echo "_site/" > .gitignore && "$GIT_BIN" add . && "$GIT_BIN" commit -q -m "Init vault")
