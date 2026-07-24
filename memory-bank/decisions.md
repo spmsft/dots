@@ -3313,3 +3313,26 @@ listing and confirmed real links (`Agentic Coding Tools`,
 tags instead of literal `[[...]]` text; confirmed root `index.md`'s
 title now reads just the vault name. Synced the same fixes into
 `~/Vaults/az`'s own git repo. Cleaned up all test artifacts afterward.
+
+### 2026-07-23 — Removed duplicate title headings on vault pages
+
+Every generated page put a `title:` in its front matter (which quarto
+renders as an `<h1 class="title">` in its own title-block header) *and*
+a matching literal `# ...` heading at the start of the body - printing
+the same title twice on every vault landing page, category page
+(`materials`/`records`/`texts`), and the root Vaults index.
+
+Removed the redundant body heading in all three places - front
+matter's `title` is now the single source of the on-page heading:
+- `regen_category_index()`: dropped the `# $title` line.
+- `ensure_main_md()`: seeds an empty `main.md` instead of `# $name`
+  (index.md's own front-matter title already covers this once
+  included).
+- `serve-all`'s generated root `index.md`: dropped `# All Vaults`.
+
+**Validation:** `bash -n`, full `activationPackage` build + live
+activation; live `vk build az` + `vk serve-all` on a throwaway port,
+confirmed via rendered HTML that `index.html`, `materials/index.html`,
+`texts/index.html`, and the root Vaults `index.html` each contain
+exactly one `<h1 class="title">` and no duplicate. Backfilled
+`~/Vaults/az/main.md` to empty. Cleaned up test artifacts afterward.

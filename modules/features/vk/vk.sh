@@ -45,12 +45,14 @@ get_vault() {
 # Helper: ensure a vault has its own main.md - the free-form, hand-edited
 # landing-page content that index.md includes via a quarto shortcode
 # (see 'new' and index.md's template below). Only ever generated when
-# missing (never overwritten), seeded with just the vault name as an h1
-# so there's something for index.md to include right away.
+# missing (never overwritten). Seeded empty: index.md's own front-matter
+# "title" already renders the vault name as the page header via
+# quarto's title block, so an explicit "# $name" heading here would
+# just duplicate it in the body.
 ensure_main_md() {
-    local path="$1" name="$2"
+    local path="$1"
     if [ ! -f "$path/main.md" ]; then
-        echo "# $name" > "$path/main.md"
+        : > "$path/main.md"
     fi
 }
 
@@ -72,8 +74,9 @@ regen_category_index() {
         echo "title: \"$title\""
         echo '---'
         echo
-        echo "# $title"
-        echo
+        # No body heading here - front matter's "title" above already
+        # renders as the page header via quarto's title block, so a
+        # "# $title" heading here would just duplicate it.
         for f in "$dir"/*.md; do
             [ -e "$f" ] || continue
             base=$(basename "$f")
@@ -116,7 +119,7 @@ cd_vault() {
         echo "Error: vault '$name' does not exist at $path (use 'vk new' first)." >&2
         exit 1
     fi
-    ensure_main_md "$path" "$name"
+    ensure_main_md "$path"
     regen_category_indexes "$path"
     cd "$path"
 }
@@ -315,8 +318,8 @@ QUARTOEOF
         echo 'title: "Vaults"'
         echo '---'
         echo
-        echo '# All Vaults'
-        echo
+        # No body heading here - front matter's "title" above already
+        # renders as the page header via quarto's title block.
         for name in "${BUILT[@]}"; do
             echo "- [$name](/$name/)"
         done
@@ -409,7 +412,7 @@ case "${1:-}" in
         fi
 
         mkdir -p "$VAULT_PATH"/{texts,materials,records,_extensions,assets}
-        ensure_main_md "$VAULT_PATH" "$VAULT_NAME"
+        ensure_main_md "$VAULT_PATH"
 
         # 1. Generate Base Index Configuration (categories listed
         # alphabetically, like every other listing in vk). The landing
