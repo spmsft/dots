@@ -3413,3 +3413,23 @@ renders as real `<em>` italics in the output HTML), and `write_note`/
 `prompt_category_type`'s shared refactor didn't change `vk note`'s own
 behavior. Cleaned up all test artifacts (`/tmp/vktesthome`, rendered
 HTML, PTY harness script) afterward.
+
+### 2026-07-24 — `suites.dev-tools.uvxAliases` (easy uvx-backed shell aliases)
+
+Added `suites.dev-tools.uvxAliases` (`attrsOf str`, `alias-name =
+"package"`) - each entry generates a `programs.bash.shellAliases.<name>
+= "uvx <package>"` alias, so wiring up a one-off `uvx <tool>` shell
+alias no longer means hand-writing a `shellAliases.foo = "uvx bar";`
+line. Defaults to `markitdown` and `trafilatura` (both requested
+directly - MarkItDown already used non-interactively by `vk import`
+via `uvx`, see that feature's own decisions.md entry; trafilatura is a
+similar HTML/URL -> Markdown/plain-text extractor). More entries can be
+added here (repo-wide) or via `dotsLocal.shell.shellAliases`
+(single-machine).
+
+**Validation:** full `activationPackage` build; built
+`homeConfigurations.default.config.home.file.".bashrc".source`
+directly and grepped it for both generated `alias -- markitdown='uvx
+markitdown'` / `alias -- trafilatura='uvx trafilatura'` lines; live
+activation + `bash -ic 'type markitdown; type trafilatura'` confirmed
+both resolve correctly in a real interactive shell.

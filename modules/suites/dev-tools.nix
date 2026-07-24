@@ -44,6 +44,33 @@ in
 
     # General tooling
     uv = coreLib.mkDefaultEnabledOption "uv (Python package/project manager)";
+
+    # Shell aliases for one-off `uvx <package>` invocations - each
+    # `name = "package"` entry below becomes
+    # `programs.bash.shellAliases.<name> = "uvx <package>"`, so running
+    # a rarely-needed Python CLI tool doesn't require its own
+    # home.packages entry (or a whole nixpkgs derivation, which may not
+    # even exist/build - see vk's MarkItDown decision in
+    # memory-bank/decisions.md) - just `uvx`'s own per-tool cache
+    # (fast after the first, ~30s cold, run). Add more entries here
+    # (repo-wide) or via dotsLocal.shell.shellAliases (single-machine)
+    # rather than hand-writing a `programs.bash.shellAliases.foo = "uvx
+    # bar";` line each time.
+    uvxAliases = lib.mkOption {
+      type = with lib.types; attrsOf str;
+      default = {
+        markitdown = "markitdown";
+        trafilatura = "trafilatura";
+      };
+      description = ''
+        `alias-name = "uvx-package-name"` pairs, each turned into a
+        `programs.bash.shellAliases.<alias-name> = "uvx <package>"`
+        entry (only when `suites.dev-tools.uv` is enabled - default
+        on). Trailing arguments still pass through normally (e.g.
+        `markitdown foo.pdf` -> `uvx markitdown foo.pdf`).
+      '';
+    };
+
     # marksman is helix's Markdown LSP (bash-language-server, helix's
     # other core LSP dep, already ships unconditionally in
     # modules/core/default.nix) - defaults on for the same reason.
@@ -111,6 +138,9 @@ in
     ]) ++ appSet.packages;
 
     alienPackages.enabledPackages = appSet.alienEnabled;
+
+    programs.bash.shellAliases = lib.mkIf cfg.uv
+      (lib.mapAttrs (_: pkg: "uvx ${pkg}") cfg.uvxAliases);
 
     # nixd config
     # NOTE: uses config.home.homeDirectory (resolved from dotsLocal in
