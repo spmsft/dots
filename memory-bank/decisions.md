@@ -3336,3 +3336,80 @@ confirmed via rendered HTML that `index.html`, `materials/index.html`,
 `texts/index.html`, and the root Vaults `index.html` each contain
 exactly one `<h1 class="title">` and no duplicate. Backfilled
 `~/Vaults/az/main.md` to empty. Cleaned up test artifacts afterward.
+
+### 2026-07-24 — `vk import` feature (MarkItDown/uvx, clipboard, bibliography)
+
+Added `vk import [vault]` - an interactive `gum choose` menu (mirroring
+`vk note`'s pattern) offering 6 modes to pull external content into a
+new note, in `modules/features/vk/vk.sh` + a small `modules/features/vk.nix`
+preamble addition:
+
+- **File**: `uvx markitdown <path>` (path via `gum file` picker) -
+  converts the file to Markdown verbatim as the note body.
+- **Code**: either reads a given file path (inferring the fenced-block
+  language from its extension) or opens `gum write` for pasted/typed
+  code with a manually-entered language tag; always wrapped in a
+  fenced code block.
+- **Clipboard**: reads the OS clipboard via a `CLIP_PASTE_CMD` bash
+  array, backend-derived exactly like `features.clipboard`'s own
+  `pasteCmdArray` (wayland/x11/wsl/macos) but computed independently in
+  `vk.nix` from `config.core.platformBackend` directly - deliberately
+  NOT gated on `features.clipboard.enable`, since that feature's paste
+  logic only exists as bash functions in `programs.bash.initExtra`, not
+  callable from vk's separate script process. Empty array (null
+  backend, CLI-only host) errors clearly instead of failing to build.
+  Always wraps pasted content in a fenced code block.
+- **Bibentry**: `gum write` to paste a BibTeX entry; renders a
+  human-readable citation line as "Authors. *Title*. Rest." (title
+  italicized, remaining venue/volume/pages/year comma-joined) via a
+  **hand-rolled field-by-field formatter** (`bib_field`/
+  `format_bib_entry`, regex-extracting `author`/`title`/`year`/
+  `journal`/`booktitle`/`publisher`/`volume`/`pages` from the raw
+  entry) rather than pandoc's `--citeproc`+default CSL style - the
+  default Chicago-author-date CSL quotes article titles and italicizes
+  the *venue* instead, the opposite of what was wanted. `pandoc
+  --citeproc` is kept only as a fallback for entries where no
+  title/author could be parsed at all. Body always includes both the
+  formatted line and the raw entry in a ` ```bibtex ` fenced block.
+- **Link**: fetches raw HTML via `curl`, extracts `<meta>`
+  og:title/og:description/og:site_name/author/article:published_time
+  (falling back to a plain `<title>` tag, and trying both attribute
+  orders) via `rg`-based regex (`extract_meta_tag`) - builds a
+  metadata-only note (frontmatter + "## Metadata" bullets + link), no
+  page body.
+- **Page**: same metadata extraction as Link, plus `uvx markitdown
+  <url>` appended as a "## Content" section - MarkItDown natively
+  fetches and converts URLs directly, no separate content-fetch step
+  needed.
+
+Shared `write_note()`/`prompt_category_type()` helpers extracted from
+`vk note`'s "Create Note" action (previously inlined there) so every
+import mode reuses the same front-matter/category/subtype logic
+instead of duplicating it.
+
+**Dependency decisions** (both discussed with the user before
+implementing):
+- MarkItDown is deliberately NOT nix-packaged - nixpkgs'
+  `python3Packages.markitdown` pulls a huge, currently-broken (in this
+  session's pinned channel) dependency closure (pandas/pdfplumber/
+  arrow-cpp, ~1.7GB). Required instead via `uvx markitdown ...` (a
+  runtime `command -v uvx` check, `require_uvx()`), relying on
+  `suites.dev-tools.uv` (already default-on) being on `$PATH` - uvx
+  caches its own tool install after the first (~30s) run.
+- `pkgs.pandoc` was added as its own explicit `home.packages` entry
+  (not reached through quarto's bundled copy) - quarto's nixpkgs
+  derivation doesn't expose a simple standalone pandoc binary path
+  (confirmed by inspecting its store output), whereas `pkgs.pandoc` is
+  nixpkgs' own stable, self-contained package.
+
+**Validation:** `bash -n`; full `activationPackage` build + live
+activation. Functionally verified live using a throwaway `$HOME`
+(`/tmp/vktesthome`) and a PTY-driving Python harness (`gum`'s TUI
+prompts refuse to run without a real `/dev/tty`, so plain piped stdin
+doesn't work for testing them) - confirmed Code mode's file-path
+extension-based language detection, Bibentry mode's formatted citation
++ raw fenced block (spot-checked via `quarto render` that the title
+renders as real `<em>` italics in the output HTML), and `write_note`/
+`prompt_category_type`'s shared refactor didn't change `vk note`'s own
+behavior. Cleaned up all test artifacts (`/tmp/vktesthome`, rendered
+HTML, PTY harness script) afterward.

@@ -4,6 +4,26 @@ let
   coreLib = import ../core/lib.nix { inherit lib; };
   cfg = config.features.vk;
 
+  # Shared, derived value (modules/core/platform.nix) - read directly
+  # rather than depending on features.clipboard.enable: that feature's
+  # own paste logic only exists as bash functions in
+  # programs.bash.initExtra, not callable from vk's separate script
+  # process, and vk should still offer 'vk import clipboard' regardless
+  # of whether the user happens to have features.clipboard enabled too.
+  # null on a CLI-only host (no compositor, not WSL) - handled below by
+  # leaving pasteCmdArray null, which yields an empty CLIP_PASTE_CMD
+  # bash array; vk.sh checks that at runtime and errors with a clear
+  # message rather than failing to build.
+  backend = config.core.platformBackend;
+  pasteCmdArray =
+    if backend == null then null
+    else {
+      wayland = ''"${pkgs.wl-clipboard}/bin/wl-paste"'';
+      x11     = ''"${pkgs.xclip}/bin/xclip" "-selection" "clipboard" "-o"'';
+      wsl     = ''"powershell.exe" "-NoProfile" "-Command" "Get-Clipboard -Raw"'';
+      macos   = ''"pbpaste"'';
+    }.${backend};
+
   # Real script logic lives in a static, shellcheck-able file (vk.sh) -
   # this preamble only resolves Nix-level package paths / options into
   # plain shell variables it references (mirrors viewer.nix/clipboard.nix).
@@ -34,6 +54,9 @@ let
     DUFS_BIN="${pkgs.dufs}/bin/dufs"
     RG_BIN="${pkgs.ripgrep}/bin/rg"
     GIT_BIN="${pkgs.git}/bin/git"
+    CURL_BIN="${pkgs.curl}/bin/curl"
+    PANDOC_BIN="${pkgs.pandoc}/bin/pandoc"
+    CLIP_PASTE_CMD=(${lib.optionalString (pasteCmdArray != null) pasteCmdArray})
   '' + builtins.readFile ./vk/vk.sh);
 
 in
@@ -49,9 +72,20 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # wl-clipboard/xclip are only needed for 'vk import clipboard' - CURL_BIN
+    # is not (curl itself is already an unconditional core package, see
+    # modules/core/default.nix, so it's not repeated here); pandoc is
+    # pulled in explicitly for 'vk import bibentry's --citeproc rendering
+    # rather than reaching for quarto's own internal pandoc copy (quarto's
+    # nixpkgs derivation doesn't expose a simple standalone pandoc binary
+    # path - confirmed by inspecting its store output - whereas
+    # pkgs.pandoc is nixpkgs' own stable, self-contained package).
     home.packages = [
       vkScript
       pkgs.quarto
-    ];
+      pkgs.pandoc
+    ]
+    ++ lib.optionals (backend == "wayland") [ pkgs.wl-clipboard ]
+    ++ lib.optionals (backend == "x11") [ pkgs.xclip ];
   };
 }

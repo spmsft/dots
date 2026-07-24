@@ -198,6 +198,138 @@ search_content() {
     "$HX_BIN" "$file:$line"
 }
 
+# Helper: interactively prompt for category + subtype, in that order
+# (subtype choices depend on the chosen category) - sets CAT/TYPE.
+# Shared by 'vk note's "Create Note" action and every 'vk import' mode
+# so the categories/subtypes/their alphabetical ordering only need to
+# be maintained in one place.
+prompt_category_type() {
+    CAT=$("$GUM_BIN" choose "materials" "records" "texts")
+    case "$CAT" in
+        records) TYPE=$("$GUM_BIN" choose "event" "note" "observation") ;;
+        materials) TYPE=$("$GUM_BIN" choose "entity" "project" "quote" "source" "topic") ;;
+        texts) TYPE=$("$GUM_BIN" choose "article" "guide" "hub") ;;
+    esac
+}
+
+# Helper: write a new note file at "$CAT/$TITLE.md" with standard
+# front matter (records get a full date+time stamp, others just a
+# date - see 'vk note's original comment on why), and a body read from
+# stdin. Sets NOTE_FILE to the written path. Shared by 'vk note's
+# "Create Note" action and every 'vk import' mode.
+write_note() {
+    local cat="$1" type="$2" title="$3"
+    local file="$cat/${title%.md}.md"
+    local date_stamp
+    if [ "$cat" = "records" ]; then
+        date_stamp=$(date '+%Y-%m-%d %H:%M')
+    else
+        date_stamp=$(date +%Y-%m-%d)
+    fi
+    {
+        echo "---"
+        echo "title: \"${title//_/ }\""
+        echo "type: $type"
+        echo "date: $date_stamp"
+        echo "---"
+        echo
+        cat
+    } > "$file"
+    NOTE_FILE="$file"
+}
+
+# Helper: best-effort <meta property="$2"|name="$2" content="..."/>
+# extraction from a fetched HTML file $1 - tries both attribute orders
+# since real-world pages vary. Prints the extracted value (possibly
+# empty) and always exits 0 so callers can chain multiple lookups
+# without `set -e` aborting on a miss.
+extract_meta_tag() {
+    local html="$1" key="$2" val=""
+    val=$("$RG_BIN" -o -N "(?:property|name)=\"$key\"[^>]*content=\"([^\"]*)\"" -r '$1' "$html" 2>/dev/null | head -1) || true
+    if [ -z "$val" ]; then
+        val=$("$RG_BIN" -o -N "content=\"([^\"]*)\"[^>]*(?:property|name)=\"$key\"" -r '$1' "$html" 2>/dev/null | head -1) || true
+    fi
+    printf '%s' "$val"
+}
+
+# Helper: best-effort BibTeX field extraction from a pasted entry $1 -
+# handles both brace-delimited (`title = {Foo}`) and quote-delimited
+# (`title = "Foo"`) values, case-insensitively (BibTeX field names are
+# conventionally lowercase but not enforced). Prints the value
+# (possibly empty).
+bib_field() {
+    local entry="$1" field="$2" val=""
+    val=$(printf '%s' "$entry" | "$RG_BIN" -o -N -i "$field\s*=\s*[{\"]([^}\"]*)[}\"]" -r '$1' | head -1) || true
+    printf '%s' "$val"
+}
+
+# Helper: render a pasted BibTeX entry $1 as a single human-readable
+# citation line - "Authors. *Title*. Rest." (title italicized,
+# remaining bits - venue/volume/pages/year - comma-joined into "Rest"),
+# rather than reaching for citeproc's default CSL style (which
+# typically quotes article titles and italicizes the *venue* instead -
+# the opposite of what was wanted here). Falls back to pandoc
+# --citeproc only if no title/author could be parsed at all (e.g. a
+# malformed or unusually-shaped entry).
+format_bib_entry() {
+    local entry="$1"
+    local authors title year venue volume pages rest formatted
+    authors=$(bib_field "$entry" author)
+    authors="${authors// and /, }"
+    title=$(bib_field "$entry" title)
+    year=$(bib_field "$entry" year)
+    venue=$(bib_field "$entry" journal)
+    [ -z "$venue" ] && venue=$(bib_field "$entry" booktitle)
+    [ -z "$venue" ] && venue=$(bib_field "$entry" publisher)
+    volume=$(bib_field "$entry" volume)
+    pages=$(bib_field "$entry" pages)
+
+    if [ -z "$title" ] && [ -z "$authors" ]; then
+        local citekey tmp_dir
+        citekey=$(printf '%s' "$entry" | "$RG_BIN" -o -N '^@\w+\{([^,]+),' -r '$1' | head -1)
+        if [ -n "$citekey" ]; then
+            tmp_dir=$(mktemp -d)
+            echo "$entry" > "$tmp_dir/refs.bib"
+            printf '[@%s]\n' "$citekey" > "$tmp_dir/cite.md"
+            formatted=$("$PANDOC_BIN" "$tmp_dir/cite.md" --citeproc --bibliography="$tmp_dir/refs.bib" --to plain 2>/dev/null || true)
+            rm -rf "$tmp_dir"
+        fi
+        [ -z "$formatted" ] && formatted="(Could not render a formatted citation - check the pasted BibTeX entry is valid.)"
+        printf '%s' "$formatted"
+        return
+    fi
+
+    rest=""
+    [ -n "$venue" ] && rest="$venue"
+    if [ -n "$volume" ]; then
+        rest="${rest:+$rest, }vol. $volume"
+    fi
+    if [ -n "$pages" ]; then
+        rest="${rest:+$rest, }pp. $pages"
+    fi
+    [ -n "$year" ] && rest="${rest:+$rest, }$year"
+
+    formatted=""
+    [ -n "$authors" ] && formatted="$authors. "
+    formatted="${formatted}*${title:-Untitled}*."
+    [ -n "$rest" ] && formatted="$formatted $rest."
+    printf '%s' "$formatted"
+}
+
+# Helper: 'vk import file'/'vk import page' both need MarkItDown
+# (Microsoft's file/URL -> Markdown converter) - deliberately NOT
+# nix-packaged (nixpkgs' python3Packages.markitdown pulls a huge,
+# currently-broken dependency closure - pandas/pdfplumber/arrow-cpp).
+# Required instead via `uvx`, which is already on $PATH via
+# suites.dev-tools.uv (default-on) and caches its own tool install
+# after the first (slow, ~30s) run.
+require_uvx() {
+    if ! command -v uvx >/dev/null 2>&1; then
+        echo "Error: 'uvx' not found on \$PATH. 'vk import file/page' needs MarkItDown, run via 'uvx markitdown' (see suites.dev-tools.uv, default-enabled) - install uv if this is a minimal host without it." >&2
+        exit 1
+    fi
+}
+
 # Helper: does vault $1 (a path) have any source file newer than its
 # own _site output, or no _site at all yet? Drives serve-all's
 # automatic per-vault rebuild-on-change - excludes quarto's own
@@ -378,6 +510,8 @@ vk - Terminal-first wiki & Zettelkasten engine
 Usage:
   vk new                                    Create a new vault (interactive)
   vk note [vault]                           Create/edit/delete/search notes (interactive)
+  vk import [vault]                         Import content into a note: File/Code/Clipboard/
+                                             Bibentry/Link/Page (interactive)
   vk search [vault|all]                     Substring-search one vault, or every vault at once
   vk rename [old] [new]                     Rename a vault (dir + baked-in title strings)
   vk watch [vault] [-p|--port PORT] [-b|--bind ADDR]
@@ -494,38 +628,11 @@ QUARTOEOF
 
         case "$ACTION" in
             "Create Note")
-                CAT=$("$GUM_BIN" choose "materials" "records" "texts")
-                # Subtype is a front-matter tag only - records/materials/
-                # texts each stay a flat list of files, no subtype
-                # subdirectories. All choices listed alphabetically.
-                case "$CAT" in
-                    records) TYPE=$("$GUM_BIN" choose "event" "note" "observation") ;;
-                    materials) TYPE=$("$GUM_BIN" choose "entity" "project" "quote" "source" "topic") ;;
-                    texts) TYPE=$("$GUM_BIN" choose "article" "guide" "hub") ;;
-                esac
+                prompt_category_type
                 TITLE=$("$GUM_BIN" input --placeholder "Note filename (e.g., compiler_optimizations)...")
                 if [ -z "$TITLE" ]; then exit 1; fi
-                FILE="$CAT/${TITLE%.md}.md"
-                # records are time-sensitive (daily-log-style entries) -
-                # always stamp the full date+time in the header, not just
-                # the date, unlike materials/texts.
-                if [ "$CAT" = "records" ]; then
-                    DATE_STAMP=$(date '+%Y-%m-%d %H:%M')
-                else
-                    DATE_STAMP=$(date +%Y-%m-%d)
-                fi
-                cat <<NOTEEOF > "$FILE"
----
-title: "${TITLE//_/ }"
-type: $TYPE
-date: $DATE_STAMP
----
-
-# ${TITLE//_/ }
-
-
-NOTEEOF
-                "$HX_BIN" "$FILE"
+                write_note "$CAT" "$TYPE" "$TITLE" <<< $'# '"${TITLE//_/ }"$'\n\n'
+                "$HX_BIN" "$NOTE_FILE"
                 ;;
 
             "Edit Note")
@@ -542,6 +649,163 @@ NOTEEOF
 
             "Fuzzy Search Text")
                 search_content "." "Search $VAULT_NAME..."
+                ;;
+        esac
+        ;;
+
+    import)
+        VAULT_NAME=$(get_vault "${2:-}")
+        cd_vault "$VAULT_NAME"
+
+        MODE=$("$GUM_BIN" choose "File" "Code" "Clipboard" "Bibentry" "Link" "Page")
+
+        case "$MODE" in
+            "File")
+                require_uvx
+                SRC_PATH=$("$GUM_BIN" file --header "Select file to import...")
+                if [ -z "$SRC_PATH" ]; then exit 1; fi
+                BODY=$(uvx markitdown "$SRC_PATH")
+                DEFAULT_TITLE=$(basename "$SRC_PATH")
+                DEFAULT_TITLE="${DEFAULT_TITLE%.*}"
+                TITLE=$("$GUM_BIN" input --placeholder "Note filename..." --value "$DEFAULT_TITLE")
+                if [ -z "$TITLE" ]; then exit 1; fi
+                prompt_category_type
+                write_note "$CAT" "$TYPE" "$TITLE" <<< "# ${TITLE//_/ }
+
+$BODY"
+                "$HX_BIN" "$NOTE_FILE"
+                ;;
+
+            "Code")
+                SRC_PATH="${3:-}"
+                if [ -n "$SRC_PATH" ] && [ -f "$SRC_PATH" ]; then
+                    CODE=$(cat "$SRC_PATH")
+                    # Infer the fenced-block language from the file
+                    # extension - falls back to no language tag (a
+                    # plain ``` block still renders fine, just without
+                    # syntax highlighting) for anything unrecognized.
+                    case "${SRC_PATH##*.}" in
+                        py) LANG=python ;; js) LANG=javascript ;; ts) LANG=typescript ;;
+                        sh|bash) LANG=bash ;; nix) LANG=nix ;; rs) LANG=rust ;; go) LANG=go ;;
+                        c) LANG=c ;; cpp|cc|cxx) LANG=cpp ;; java) LANG=java ;; rb) LANG=ruby ;;
+                        yml|yaml) LANG=yaml ;; json) LANG=json ;; toml) LANG=toml ;;
+                        md) LANG=markdown ;; sql) LANG=sql ;; lua) LANG=lua ;;
+                        *) LANG="" ;;
+                    esac
+                    DEFAULT_TITLE=$(basename "$SRC_PATH")
+                    DEFAULT_TITLE="${DEFAULT_TITLE%.*}"
+                else
+                    CODE=$("$GUM_BIN" write --header "Paste or type code to import...")
+                    if [ -z "$CODE" ]; then exit 1; fi
+                    LANG=$("$GUM_BIN" input --placeholder "Language (for syntax highlighting, optional)...")
+                    DEFAULT_TITLE=""
+                fi
+                TITLE=$("$GUM_BIN" input --placeholder "Note filename..." --value "$DEFAULT_TITLE")
+                if [ -z "$TITLE" ]; then exit 1; fi
+                prompt_category_type
+                write_note "$CAT" "$TYPE" "$TITLE" <<< "# ${TITLE//_/ }
+
+\`\`\`$LANG
+$CODE
+\`\`\`"
+                "$HX_BIN" "$NOTE_FILE"
+                ;;
+
+            "Clipboard")
+                if [ "${#CLIP_PASTE_CMD[@]}" -eq 0 ]; then
+                    echo "Error: no clipboard backend configured (config.core.platformBackend is null - CLI-only host, no compositor/WSL). 'vk import clipboard' needs a graphical backend." >&2
+                    exit 1
+                fi
+                CONTENT=$("${CLIP_PASTE_CMD[@]}")
+                if [ -z "$CONTENT" ]; then
+                    echo "Error: clipboard is empty." >&2
+                    exit 1
+                fi
+                TITLE=$("$GUM_BIN" input --placeholder "Note filename...")
+                if [ -z "$TITLE" ]; then exit 1; fi
+                prompt_category_type
+                write_note "$CAT" "$TYPE" "$TITLE" <<< "# ${TITLE//_/ }
+
+\`\`\`
+$CONTENT
+\`\`\`"
+                "$HX_BIN" "$NOTE_FILE"
+                ;;
+
+            "Bibentry")
+                ENTRY=$("$GUM_BIN" write --header "Paste BibTeX entry...")
+                if [ -z "$ENTRY" ]; then exit 1; fi
+                # Citekey (e.g. "@article{smith2024foo," -> "smith2024foo")
+                # is only used as the default note filename here - the
+                # formatted citation itself is built field-by-field, see
+                # format_bib_entry().
+                CITEKEY=$(echo "$ENTRY" | "$RG_BIN" -o -N '^@\w+\{([^,]+),' -r '$1' | head -1)
+                FORMATTED=$(format_bib_entry "$ENTRY")
+                TITLE=$("$GUM_BIN" input --placeholder "Note filename..." --value "$CITEKEY")
+                if [ -z "$TITLE" ]; then exit 1; fi
+                prompt_category_type
+                write_note "$CAT" "$TYPE" "$TITLE" <<< "# ${TITLE//_/ }
+
+$FORMATTED
+
+\`\`\`bibtex
+$ENTRY
+\`\`\`"
+                "$HX_BIN" "$NOTE_FILE"
+                ;;
+
+            "Link"|"Page")
+                URL=$("$GUM_BIN" input --placeholder "Enter URL...")
+                if [ -z "$URL" ]; then exit 1; fi
+                TMP_HTML=$(mktemp)
+                "$CURL_BIN" -sL -A "Mozilla/5.0" "$URL" -o "$TMP_HTML" || true
+
+                META_TITLE=$(extract_meta_tag "$TMP_HTML" "og:title")
+                if [ -z "$META_TITLE" ]; then
+                    META_TITLE=$("$RG_BIN" -o -N '<title[^>]*>([^<]*)</title>' -r '$1' "$TMP_HTML" 2>/dev/null | head -1) || true
+                fi
+                META_DESC=$(extract_meta_tag "$TMP_HTML" "og:description")
+                if [ -z "$META_DESC" ]; then
+                    META_DESC=$(extract_meta_tag "$TMP_HTML" "description")
+                fi
+                META_SITE=$(extract_meta_tag "$TMP_HTML" "og:site_name")
+                META_AUTHOR=$(extract_meta_tag "$TMP_HTML" "author")
+                META_PUBLISHED=$(extract_meta_tag "$TMP_HTML" "article:published_time")
+                rm -f "$TMP_HTML"
+
+                DEFAULT_TITLE="${META_TITLE:-$URL}"
+                TITLE=$("$GUM_BIN" input --placeholder "Note filename..." --value "$DEFAULT_TITLE")
+                if [ -z "$TITLE" ]; then exit 1; fi
+                prompt_category_type
+
+                META_BLOCK="## Metadata
+
+- **Source**: <$URL>"
+                [ -n "$META_SITE" ] && META_BLOCK="$META_BLOCK
+- **Site**: $META_SITE"
+                [ -n "$META_AUTHOR" ] && META_BLOCK="$META_BLOCK
+- **Author**: $META_AUTHOR"
+                [ -n "$META_PUBLISHED" ] && META_BLOCK="$META_BLOCK
+- **Published**: $META_PUBLISHED"
+                [ -n "$META_DESC" ] && META_BLOCK="$META_BLOCK
+- **Description**: $META_DESC"
+
+                if [ "$MODE" = "Page" ]; then
+                    require_uvx
+                    PAGE_BODY=$(uvx markitdown "$URL")
+                    write_note "$CAT" "$TYPE" "$TITLE" <<< "# ${TITLE//_/ }
+
+$META_BLOCK
+
+## Content
+
+$PAGE_BODY"
+                else
+                    write_note "$CAT" "$TYPE" "$TITLE" <<< "# ${TITLE//_/ }
+
+$META_BLOCK"
+                fi
+                "$HX_BIN" "$NOTE_FILE"
                 ;;
         esac
         ;;
