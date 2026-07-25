@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Reads /sys/devices/system/cpu/cpu*/topology/die_id for each online
 /// core, grouping core ids by die (CCD on AMD). Returns an empty map if
@@ -23,6 +23,46 @@ fn cores_by_die() -> BTreeMap<usize, Vec<usize>> {
     }
 
     by_die
+}
+
+/// Like `cores_by_die`, but groups by each logical CPU's physical
+/// `core_id` (deduped per die via a set) rather than its raw logical id
+/// - SMT sibling threads on the same physical core share a `core_id`, so
+/// this yields the true physical-core count per die instead of the
+/// logical (hyperthread-inclusive) one.
+fn physical_cores_by_die() -> BTreeMap<usize, BTreeSet<usize>> {
+    let mut by_die: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+    let core_ids = core_affinity::get_core_ids().unwrap_or_default();
+
+    for core in core_ids {
+        let die_path = format!("/sys/devices/system/cpu/cpu{}/topology/die_id", core.id);
+        let core_path = format!("/sys/devices/system/cpu/cpu{}/topology/core_id", core.id);
+        let die_id = std::fs::read_to_string(&die_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        if let Some(phys_core_id) = std::fs::read_to_string(&core_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+        {
+            by_die.entry(die_id).or_default().insert(phys_core_id);
+        }
+    }
+
+    by_die
+}
+
+/// Number of distinct physical cores (SMT siblings deduped) on a single
+/// CCD/die - the natural default for --cores-per-worker: pinning a
+/// worker to more logical threads than physical cores per die just
+/// oversubscribes the same physical cores via SMT for no throughput
+/// gain on CPU-bound inference, while pinning to fewer wastes part of a
+/// die. Returns `None` if /sys topology info isn't available (matches
+/// `cores_by_die`'s fallback story) so callers can fall back to a fixed
+/// default instead.
+pub fn physical_cores_per_die() -> Option<usize> {
+    let by_die = physical_cores_by_die();
+    by_die.values().map(|cores| cores.len()).max()
 }
 
 /// Plans `workers` core-id groups of up to `cores_per_worker` cores each.

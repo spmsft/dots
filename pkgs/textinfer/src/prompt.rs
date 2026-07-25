@@ -16,6 +16,7 @@ pub enum Mode {
 pub struct Ops {
     pub summarize: bool,
     pub paraphrase: bool,
+    pub passthrough: bool,
     pub sanitize: bool,
     pub translate_lang: Option<String>,
     pub title: bool,
@@ -40,12 +41,18 @@ pub struct Ops {
 
 impl Ops {
     pub fn validate(&self) -> Result<()> {
-        if self.summarize && self.paraphrase {
-            bail!("--summarize and --paraphrase are mutually exclusive (pick one primary mode)");
+        let primary_count =
+            [self.summarize, self.paraphrase, self.passthrough].iter().filter(|&&x| x).count();
+        if primary_count > 1 {
+            bail!(
+                "--summarize/--paraphrase/--passthrough are mutually exclusive \
+                 (pick at most one primary mode)"
+            );
         }
         if self.custom_prompt.is_some()
             && (self.summarize
                 || self.paraphrase
+                || self.passthrough
                 || self.sanitize
                 || self.translate_lang.is_some()
                 || self.title
@@ -53,8 +60,8 @@ impl Ops {
                 || self.size.is_some())
         {
             bail!(
-                "--prompt is mutually exclusive with --summarize/--paraphrase/--sanitize/\
-                 --translate/--title/--subtitle/--size"
+                "--prompt is mutually exclusive with --summarize/--paraphrase/--passthrough/\
+                 --sanitize/--translate/--title/--subtitle/--size"
             );
         }
         Ok(())

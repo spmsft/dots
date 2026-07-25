@@ -53,8 +53,8 @@ in {
           file = "phi-4-Q4_K.gguf";
         };
         "qwen2.5-7b" = {
-          repo_id = "Qwen/Qwen2.5-7B-Instruct-GGUF";
-          file = "qwen2.5-7b-instruct-q4_k_m.gguf";
+          repo_id = "bartowski/Qwen2.5-7B-Instruct-GGUF";
+          file = "Qwen2.5-7B-Instruct-Q4_K_M.gguf";
         };
       };
       description = ''

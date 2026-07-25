@@ -75,6 +75,7 @@ fn default_cores_per_worker(args: &cli::Args) -> usize {
                 .ok()
                 .and_then(|s| s.parse().ok())
         })
+        .or_else(topology::physical_cores_per_die)
         .unwrap_or(4)
 }
 
@@ -99,6 +100,7 @@ fn ops_from_args(args: &cli::Args) -> Result<prompt::Ops> {
     let ops = prompt::Ops {
         summarize: args.summarize,
         paraphrase: args.paraphrase,
+        passthrough: args.passthrough,
         sanitize: args.sanitize,
         translate_lang: if args.translate { args.lang.clone() } else { None },
         title: args.title,

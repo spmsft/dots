@@ -16,13 +16,23 @@ pub struct Args {
     /// Input files to process. When omitted, reads a single job from stdin.
     pub files: Vec<PathBuf>,
 
-    /// Summarize the input (primary mode; mutually exclusive with --paraphrase).
+    /// Summarize the input (primary mode; mutually exclusive with --paraphrase/--passthrough).
     #[arg(long)]
     pub summarize: bool,
 
-    /// Paraphrase the input (primary mode; mutually exclusive with --summarize).
+    /// Paraphrase the input (primary mode; mutually exclusive with --summarize/--passthrough).
     #[arg(long)]
     pub paraphrase: bool,
+
+    /// Pass the input through with its content and meaning unchanged
+    /// (primary mode; mutually exclusive with --summarize/--paraphrase).
+    /// This is what happens if no primary mode is given at all - stating
+    /// it explicitly documents intent and is required when combining
+    /// with --prompt's mutual-exclusivity check. Still combinable with
+    /// --sanitize/--translate/--title/--subtitle, same as the other
+    /// primary modes.
+    #[arg(long)]
+    pub passthrough: bool,
 
     /// Fix spelling/grammar. Combinable with any primary mode.
     #[arg(long)]
@@ -53,9 +63,9 @@ pub struct Args {
 
     /// Fully custom instruction, sent as a second system message after
     /// the persona (--system) and before the input content. Mutually
-    /// exclusive with --summarize/--paraphrase/--sanitize/--translate/
-    /// --title/--subtitle/--size - use this for full manual control over
-    /// what the model is asked to do instead of those.
+    /// exclusive with --summarize/--paraphrase/--passthrough/--sanitize/
+    /// --translate/--title/--subtitle/--size - use this for full manual
+    /// control over what the model is asked to do instead of those.
     #[arg(long)]
     pub prompt: Option<String>,
 
@@ -103,8 +113,12 @@ pub struct Args {
     #[arg(long)]
     pub workers: Option<usize>,
 
-    /// CPU cores per worker. Defaults to the registry/env-configured value,
-    /// falling back to 4.
+    /// CPU cores per worker. Defaults to the registry/env-configured
+    /// value, falling back to the number of physical cores (SMT sibling
+    /// threads deduped) on a single CCD/die, or 4 if that can't be
+    /// determined - pinning a worker to more logical threads than
+    /// physical cores per die just oversubscribes the same cores via SMT
+    /// with no throughput gain.
     #[arg(long)]
     pub cores_per_worker: Option<usize>,
 
