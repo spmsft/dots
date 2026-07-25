@@ -99,6 +99,14 @@ pub struct Args {
     #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
     pub format: OutputFormat,
 
+    /// Write result output only to this file instead of stdout. Timing
+    /// diagnostics, warnings, and errors always go to stderr regardless
+    /// of this flag - this file receives exactly the result content
+    /// (or, with --dry-run, exactly the printed prompt/messages), never
+    /// mixed with any other output.
+    #[arg(short = 'o', long)]
+    pub output: Option<PathBuf>,
+
     /// Model name from the registry (see `textinfer --list-models`).
     /// Defaults to the registry's configured default model.
     #[arg(long)]

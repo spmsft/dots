@@ -6,11 +6,13 @@ mod topology;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use mistralrs::{GgufModelBuilder, Model, TextMessageRole, TextMessages};
+use indicatif::{ProgressBar, ProgressStyle};
+use mistralrs::{GgufModelBuilder, Model, Response, TextMessageRole, TextMessages};
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, Read, Write};
+use std::io::{BufRead, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::time::{Duration, Instant};
 
 /// One unit of work: an input's text plus the operations requested for
 /// it. Sent to worker subprocesses as a single JSON line on their stdin.
@@ -113,6 +115,23 @@ fn ops_from_args(args: &cli::Args) -> Result<prompt::Ops> {
     Ok(ops)
 }
 
+/// Opens the destination for result output (or, with --dry-run, the
+/// printed prompt/messages): `-o/--output <path>` if given, else stdout.
+/// This is deliberately the *only* thing that ever writes to this
+/// destination - timing diagnostics, warnings, and per-input errors
+/// always go to stderr via eprintln! regardless, so `-o` output is never
+/// polluted with anything but the actual result content.
+fn open_output(args: &cli::Args) -> Result<Box<dyn Write>> {
+    match &args.output {
+        Some(path) => {
+            let file = std::fs::File::create(path)
+                .with_context(|| format!("failed to create output file '{}'", path.display()))?;
+            Ok(Box::new(file))
+        }
+        None => Ok(Box::new(std::io::stdout())),
+    }
+}
+
 fn gather_inputs(files: &[PathBuf]) -> Result<Vec<Input>> {
     if files.is_empty() {
         let mut text = String::new();
@@ -162,6 +181,109 @@ fn render_dry_run(label: &str, ops: &prompt::Ops, text: &str) -> String {
     out
 }
 
+/// Whether stderr is an interactive terminal - gates real progress bars
+/// (indicatif) vs plain periodic `eprintln!` logging. Never gated on
+/// stdout, since progress/diagnostics always go to stderr regardless of
+/// `-o`/redirection of the result output itself.
+fn stderr_is_tty() -> bool {
+    std::io::stderr().is_terminal()
+}
+
+/// Streams a chat request to completion, driving a stderr progress
+/// spinner (tok/s) when stderr is a TTY, or periodic `eprintln!`
+/// progress logs otherwise (never a bar in non-interactive contexts, per
+/// user request - logging is sufficient there). Returns the
+/// concatenated response text once the stream ends.
+async fn generate(model: &Model, messages: TextMessages, label: &str) -> Result<String> {
+    let interactive = stderr_is_tty();
+    let mut stream = model
+        .stream_chat_request(messages)
+        .await
+        .context("inference request failed")?;
+
+    let gen_start = Instant::now();
+    let pb = if interactive {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::with_template("{spinner} textinfer: {msg}")
+                .unwrap_or_else(|_| ProgressStyle::default_spinner()),
+        );
+        pb.enable_steady_tick(Duration::from_millis(100));
+        Some(pb)
+    } else {
+        None
+    };
+
+    let mut text = String::new();
+    let mut tokens: usize = 0;
+    let mut last_log = Instant::now();
+    let mut final_tokens: Option<usize> = None;
+    let mut final_tok_per_sec: Option<f32> = None;
+
+    while let Some(resp) = stream.next().await {
+        match resp {
+            Response::Chunk(chunk) => {
+                if let Some(content) = chunk.choices.first().and_then(|c| c.delta.content.as_ref()) {
+                    text.push_str(content);
+                    tokens += 1;
+                }
+                if let Some(usage) = &chunk.usage {
+                    final_tokens = Some(usage.completion_tokens);
+                    final_tok_per_sec = Some(usage.avg_compl_tok_per_sec);
+                }
+                let elapsed = gen_start.elapsed().as_secs_f32().max(0.001);
+                let tok_s = tokens as f32 / elapsed;
+                if let Some(pb) = &pb {
+                    pb.set_message(format!("{label}: {tokens} tok, {tok_s:.1} tok/s"));
+                } else if last_log.elapsed() >= Duration::from_secs(2) {
+                    eprintln!("textinfer: [progress] {label}: {tokens} tok, {tok_s:.1} tok/s");
+                    last_log = Instant::now();
+                }
+            }
+            Response::Done(done) => {
+                if text.is_empty() {
+                    text = done.choices[0].message.content.clone().unwrap_or_default();
+                }
+                final_tokens = Some(done.usage.completion_tokens);
+                final_tok_per_sec = Some(done.usage.avg_compl_tok_per_sec);
+            }
+            Response::ModelError(msg, _) | Response::CompletionModelError(msg, _) => {
+                if let Some(pb) = &pb {
+                    pb.finish_and_clear();
+                }
+                bail!("model error: {msg}");
+            }
+            Response::InternalError(e) => {
+                if let Some(pb) = &pb {
+                    pb.finish_and_clear();
+                }
+                bail!("internal error: {e}");
+            }
+            Response::ValidationError(e) => {
+                if let Some(pb) = &pb {
+                    pb.finish_and_clear();
+                }
+                bail!("validation error: {e}");
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(pb) = pb {
+        pb.finish_and_clear();
+    }
+
+    let elapsed = gen_start.elapsed().as_secs_f32();
+    match (final_tokens, final_tok_per_sec) {
+        (Some(tokens), Some(tok_s)) => {
+            eprintln!("textinfer: [timing] generation took {elapsed:.2}s ({tokens} tokens, {tok_s:.1} tok/s)");
+        }
+        _ => eprintln!("textinfer: [timing] generation took {elapsed:.2}s"),
+    }
+
+    Ok(text)
+}
+
 /// Runs one job against an already-loaded model: builds the prompt,
 /// sends the chat request, and (for the structured/non---prompt path)
 /// leniently parses+validates the JSON response. Shared by both the
@@ -173,15 +295,7 @@ async fn run_job(model: &Model, ops: &prompt::Ops, text: &str) -> Result<serde_j
                 .add_message(TextMessageRole::System, persona)
                 .add_message(TextMessageRole::System, custom)
                 .add_message(TextMessageRole::User, text);
-            let response = model
-                .send_chat_request(messages)
-                .await
-                .context("inference request failed")?;
-            let raw = response.choices[0]
-                .message
-                .content
-                .clone()
-                .unwrap_or_default();
+            let raw = generate(model, messages, "generating").await?;
             Ok(serde_json::json!({ "body": raw.trim() }))
         }
         prompt::PromptPlan::Structured { system, keys } => {
@@ -189,18 +303,7 @@ async fn run_job(model: &Model, ops: &prompt::Ops, text: &str) -> Result<serde_j
                 .add_message(TextMessageRole::System, system)
                 .add_message(TextMessageRole::User, text);
 
-            let gen_start = std::time::Instant::now();
-            let response = model
-                .send_chat_request(messages)
-                .await
-                .context("inference request failed")?;
-            eprintln!("textinfer: [timing] generation took {:.2}s", gen_start.elapsed().as_secs_f32());
-
-            let raw = response.choices[0]
-                .message
-                .content
-                .clone()
-                .unwrap_or_default();
+            let raw = generate(model, messages, "generating").await?;
 
             let value = prompt::extract_json_object(&raw)?;
             prompt::require_keys(&value, &keys, &raw)?;
@@ -288,6 +391,24 @@ async fn load_model(args: &cli::Args) -> Result<Model> {
         .context("resolved model path has no parent directory")?
         .to_path_buf();
 
+    // mistralrs doesn't expose incremental load-progress, so this is
+    // necessarily an indeterminate spinner (elapsed-time only) rather
+    // than a proportional bar - only shown when stderr is a TTY, else
+    // the existing plain timing eprintln! below is the whole story.
+    let pb = if stderr_is_tty() {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::with_template("{spinner} textinfer: loading model '{msg}'... {elapsed}")
+                .unwrap_or_else(|_| ProgressStyle::default_spinner()),
+        );
+        pb.set_message(model_name.clone());
+        pb.enable_steady_tick(Duration::from_millis(100));
+        Some(pb)
+    } else {
+        eprintln!("textinfer: loading model '{model_name}'...");
+        None
+    };
+
     // Passing a local directory (rather than a HF repo id) makes
     // mistralrs load purely from disk - no hf-hub network/ETag checks
     // on every invocation, which is what made repo-id-based loading
@@ -297,6 +418,10 @@ async fn load_model(args: &cli::Args) -> Result<Model> {
         .build()
         .await
         .with_context(|| format!("failed to load model '{model_name}'"))?;
+
+    if let Some(pb) = pb {
+        pb.finish_and_clear();
+    }
     eprintln!("textinfer: [timing] model load took {:.2}s", load_start.elapsed().as_secs_f32());
     Ok(model)
 }
@@ -494,11 +619,12 @@ fn main() -> Result<()> {
 
     let ops = ops_from_args(&args)?;
     let inputs = gather_inputs(&args.files)?;
+    let mut out = open_output(&args)?;
 
     if args.dry_run {
         for input in &inputs {
-            print!("{}", render_dry_run(&input.label, &ops, &input.text));
-            println!();
+            write!(out, "{}", render_dry_run(&input.label, &ops, &input.text))?;
+            writeln!(out)?;
         }
         return Ok(());
     }
@@ -545,7 +671,7 @@ fn main() -> Result<()> {
             let mut had_error = false;
             for (input, result) in inputs.iter().zip(results.iter()) {
                 match &result.value {
-                    Some(value) => print!("{}", render_markdown(&input.label, multiple, value)),
+                    Some(value) => write!(out, "{}", render_markdown(&input.label, multiple, value))?,
                     None => {
                         had_error = true;
                         eprintln!(
@@ -556,7 +682,7 @@ fn main() -> Result<()> {
                     }
                 }
                 if multiple {
-                    println!();
+                    writeln!(out)?;
                 }
             }
             if had_error {
@@ -587,9 +713,9 @@ fn main() -> Result<()> {
                 .collect();
 
             if multiple {
-                println!("{}", serde_json::to_string_pretty(&entries)?);
+                writeln!(out, "{}", serde_json::to_string_pretty(&entries)?)?;
             } else if let Some(entry) = entries.into_iter().next() {
-                println!("{}", serde_json::to_string_pretty(&entry)?);
+                writeln!(out, "{}", serde_json::to_string_pretty(&entry)?)?;
             }
             if had_error {
                 std::process::exit(1);
