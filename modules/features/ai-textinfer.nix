@@ -27,6 +27,7 @@ let
   modelsConfig = {
     default_model = cfg.defaultModel;
     quick_model = cfg.quickModel;
+    tiny_model = cfg.tinyModel;
     models = cfg.models;
   };
 in {
@@ -36,13 +37,23 @@ in {
     defaultModel = lib.mkOption {
       type = lib.types.str;
       default = "phi-4";
-      description = "Name (key into `models`) of the model used unless --model/--quick is passed.";
+      description = "Name (key into `models`) of the model used unless --model/--quick/--tiny is passed.";
     };
 
     quickModel = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = "qwen2.5-7b";
       description = "Name (key into `models`) of the model used for --quick. Null disables --quick.";
+    };
+
+    tinyModel = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = "tiny";
+      description = ''
+        Name (key into `models`) of the model used for --tiny - a small,
+        low-quality model kept around for fast smoke-testing (does not
+        produce good enough output for real use). Null disables --tiny.
+      '';
     };
 
     models = lib.mkOption {
@@ -55,6 +66,10 @@ in {
         "qwen2.5-7b" = {
           repo_id = "bartowski/Qwen2.5-7B-Instruct-GGUF";
           file = "Qwen2.5-7B-Instruct-Q4_K_M.gguf";
+        };
+        tiny = {
+          repo_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF";
+          file = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf";
         };
       };
       description = ''

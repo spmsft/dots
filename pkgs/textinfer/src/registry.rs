@@ -29,6 +29,11 @@ pub struct ModelsConfig {
     /// model has been designated for that role.
     #[serde(default)]
     pub quick_model: Option<String>,
+    /// Name of the model tagged as the tiny/smoke-test choice in the
+    /// registry, selected via `--tiny`. `None` if no model has been
+    /// designated for that role.
+    #[serde(default)]
+    pub tiny_model: Option<String>,
 }
 
 pub fn load(path: &Path) -> Result<ModelsConfig> {

@@ -88,6 +88,12 @@ fn ops_from_args(args: &cli::Args) -> Result<prompt::Ops> {
     if args.quick && args.model.is_some() {
         bail!("--quick and --model are mutually exclusive");
     }
+    if args.tiny && args.model.is_some() {
+        bail!("--tiny and --model are mutually exclusive");
+    }
+    if args.quick && args.tiny {
+        bail!("--quick and --tiny are mutually exclusive");
+    }
 
     let size = match &args.size {
         Some(spec) => {
@@ -110,6 +116,7 @@ fn ops_from_args(args: &cli::Args) -> Result<prompt::Ops> {
         size,
         custom_prompt: args.prompt.clone(),
         system: args.system.clone(),
+        max_tokens: args.max_tokens,
     };
     ops.validate()?;
     Ok(ops)
@@ -194,10 +201,18 @@ fn stderr_is_tty() -> bool {
 /// progress logs otherwise (never a bar in non-interactive contexts, per
 /// user request - logging is sufficient there). Returns the
 /// concatenated response text once the stream ends.
-async fn generate(model: &Model, messages: TextMessages, label: &str) -> Result<String> {
+async fn generate(model: &Model, messages: TextMessages, label: &str, max_tokens: usize) -> Result<String> {
     let interactive = stderr_is_tty();
+    // TextMessages alone has no sampling controls; converting to a
+    // RequestBuilder lets us cap generation length. Without this cap,
+    // SamplingParams::max_len defaults to None (unbounded) - the model's
+    // only stopping signal is then its own end-of-text token, so a
+    // confused/degenerate response (e.g. a one-word input) can ramble for
+    // thousands of tokens - minutes on a CPU - before ever finishing.
+    let request: mistralrs::RequestBuilder = messages.into();
+    let request = request.set_sampler_max_len(max_tokens);
     let mut stream = model
-        .stream_chat_request(messages)
+        .stream_chat_request(request)
         .await
         .context("inference request failed")?;
 
@@ -289,13 +304,14 @@ async fn generate(model: &Model, messages: TextMessages, label: &str) -> Result<
 /// leniently parses+validates the JSON response. Shared by both the
 /// single-process path and each worker.
 async fn run_job(model: &Model, ops: &prompt::Ops, text: &str) -> Result<serde_json::Value> {
+    let max_tokens = prompt::effective_max_tokens(ops, text);
     match prompt::plan(ops) {
         prompt::PromptPlan::Custom { persona, custom } => {
             let messages = TextMessages::new()
                 .add_message(TextMessageRole::System, persona)
                 .add_message(TextMessageRole::System, custom)
                 .add_message(TextMessageRole::User, text);
-            let raw = generate(model, messages, "generating").await?;
+            let raw = generate(model, messages, "generating", max_tokens).await?;
             Ok(serde_json::json!({ "body": raw.trim() }))
         }
         prompt::PromptPlan::Structured { system, keys } => {
@@ -303,7 +319,7 @@ async fn run_job(model: &Model, ops: &prompt::Ops, text: &str) -> Result<serde_j
                 .add_message(TextMessageRole::System, system)
                 .add_message(TextMessageRole::User, text);
 
-            let raw = generate(model, messages, "generating").await?;
+            let raw = generate(model, messages, "generating", max_tokens).await?;
 
             let value = prompt::extract_json_object(&raw)?;
             prompt::require_keys(&value, &keys, &raw)?;
@@ -313,8 +329,8 @@ async fn run_job(model: &Model, ops: &prompt::Ops, text: &str) -> Result<serde_j
 }
 
 /// Resolves which registry model name a run should use: --model wins,
-/// then --quick (mapped through the registry's quick_model), else the
-/// registry's default_model.
+/// then --quick/--tiny (mapped through the registry's quick_model/
+/// tiny_model), else the registry's default_model.
 fn resolve_model_name(args: &cli::Args, cfg: &registry::ModelsConfig) -> Result<String> {
     if let Some(model) = &args.model {
         Ok(model.clone())
@@ -322,6 +338,10 @@ fn resolve_model_name(args: &cli::Args, cfg: &registry::ModelsConfig) -> Result<
         cfg.quick_model
             .clone()
             .context("no quick model configured in the registry (set quick_model)")
+    } else if args.tiny {
+        cfg.tiny_model
+            .clone()
+            .context("no tiny model configured in the registry (set tiny_model)")
     } else {
         Ok(cfg.default_model.clone())
     }
@@ -343,7 +363,7 @@ fn run_fetch(args: &cli::Args) -> Result<()> {
     std::env::set_var("HF_HOME", models_dir(args));
     let cfg = registry::load(&models_config_path(args))?;
 
-    let targets: Vec<(String, registry::ModelEntry)> = if args.model.is_some() || args.quick {
+    let targets: Vec<(String, registry::ModelEntry)> = if args.model.is_some() || args.quick || args.tiny {
         let name = resolve_model_name(args, &cfg)?;
         let entry = registry::resolve(&cfg, &name)?.clone();
         vec![(name, entry)]
@@ -505,6 +525,9 @@ fn spawn_workers(args: &cli::Args, core_groups: &[Vec<usize>]) -> Result<Vec<Chi
             if args.quick {
                 cmd.arg("--quick");
             }
+            if args.tiny {
+                cmd.arg("--tiny");
+            }
             cmd.arg("--models-config").arg(models_config_path(args));
             cmd.arg("--models-dir").arg(models_dir(args));
             cmd.arg("--worker-internal").arg(idx.to_string());
@@ -605,6 +628,8 @@ fn main() -> Result<()> {
                 " (default)"
             } else if cfg.quick_model.as_deref() == Some(name.as_str()) {
                 " (quick)"
+            } else if cfg.tiny_model.as_deref() == Some(name.as_str()) {
+                " (tiny)"
             } else {
                 ""
             };

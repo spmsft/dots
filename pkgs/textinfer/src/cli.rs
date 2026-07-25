@@ -69,6 +69,18 @@ pub struct Args {
     #[arg(long)]
     pub prompt: Option<String>,
 
+    /// Hard cap on generated tokens per input. Without this the model
+    /// has no stopping signal beyond its own end-of-text token, so a
+    /// confused or degenerate response (e.g. a trivial one-word input)
+    /// can ramble for thousands of tokens - minutes on a CPU - before
+    /// ever finishing. Defaults to an automatic estimate scaled to each
+    /// input's own size and the requested operation (see
+    /// `prompt::effective_max_tokens`) rather than one flat number that
+    /// would be wildly wrong for either a one-line input or a full
+    /// document; set this to override that estimate for every input.
+    #[arg(long)]
+    pub max_tokens: Option<usize>,
+
     /// Print the exact prompt/messages that would be sent to the model
     /// for each input, then exit without loading the model or running
     /// any inference.
@@ -77,17 +89,23 @@ pub struct Args {
 
     /// Ensure the target model(s) are downloaded to the local model
     /// cache, then exit - a deliberate one-off setup step. Downloads the
-    /// model given by --model/--quick, or every model in the registry if
-    /// neither is given. Normal inference runs never touch the network
-    /// themselves; they fail fast with a hint to run this first if a
-    /// model isn't cached yet.
+    /// model given by --model/--quick/--tiny, or every model in the
+    /// registry if none is given. Normal inference runs never touch the
+    /// network themselves; they fail fast with a hint to run this first
+    /// if a model isn't cached yet.
     #[arg(long)]
     pub fetch: bool,
 
     /// Use the registry's "quick" model (see --list-models) instead of
-    /// the default. Mutually exclusive with --model.
+    /// the default. Mutually exclusive with --model/--tiny.
     #[arg(long)]
     pub quick: bool,
+
+    /// Use the registry's "tiny" model (see --list-models) - a small,
+    /// low-quality model kept around for fast smoke-testing, not for
+    /// real output. Mutually exclusive with --model/--quick.
+    #[arg(long)]
+    pub tiny: bool,
 
     /// Custom persona/style guide, e.g. "You are a terse technical editor
     /// writing in formal German by default." Replaces the default generic

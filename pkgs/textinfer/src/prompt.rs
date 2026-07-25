@@ -37,6 +37,9 @@ pub struct Ops {
     /// strict JSON-output contract that follows it is always kept intact
     /// (a custom --system can change tone/voice, not the output format).
     pub system: Option<String>,
+    /// Explicit --max-tokens override, if given. `None` means "compute
+    /// an automatic per-input estimate" (see `effective_max_tokens`).
+    pub max_tokens: Option<usize>,
 }
 
 impl Ops {
@@ -236,4 +239,65 @@ pub fn require_keys(value: &serde_json::Value, keys: &[&str], raw: &str) -> Resu
         }
     }
     Ok(())
+}
+
+/// Estimates a sensible generation cap in the absence of an explicit
+/// `--max-tokens` override: scaled to this input's own size and the
+/// requested operation, so a one-word input generates a handful of
+/// tokens (finishing in seconds) while a full document gets enough
+/// headroom to actually complete - rather than either one flat number
+/// that's wildly wrong in one direction, or the previous unbounded
+/// default that could ramble for minutes on a CPU with no stopping
+/// signal beyond the model's own end-of-text token.
+pub fn effective_max_tokens(ops: &Ops, text: &str) -> usize {
+    if let Some(explicit) = ops.max_tokens {
+        return explicit;
+    }
+
+    // ~4 chars/token is a rough but serviceable estimate for English
+    // text across common tokenizers - used only as a steering cap, not
+    // an exact target.
+    let input_tokens = (text.chars().count() / 4).max(1);
+
+    let mut tokens = if ops.custom_prompt.is_some() {
+        // Unknown what a fully custom --prompt asks for - be generous.
+        input_tokens * 2
+    } else {
+        match ops.mode() {
+            Mode::Summarize => {
+                if let Some(size) = ops.size {
+                    let target_chars = match size {
+                        Size::Percent(p) => (text.chars().count() * p as usize) / 100,
+                        Size::Bytes(b) => b as usize,
+                    };
+                    (target_chars / 4).max(1)
+                } else {
+                    // No explicit target: default to roughly a third of
+                    // the input, with a floor so trivial inputs still
+                    // get enough room for a coherent sentence rather
+                    // than being cut off mid-thought.
+                    (input_tokens / 3).max(24)
+                }
+            }
+            Mode::Paraphrase => (input_tokens as f64 * 1.3) as usize,
+            Mode::AsIs => (input_tokens as f64 * 1.2) as usize,
+        }
+    };
+
+    // Headroom for the JSON wrapper itself plus any optional keys.
+    tokens += 24;
+    if ops.title {
+        tokens += 24;
+    }
+    if ops.subtitle {
+        tokens += 24;
+    }
+    if ops.translate_lang.is_some() {
+        // Some languages need meaningfully more tokens for the same
+        // meaning (e.g. German compounding, CJK segmentation) - pad
+        // generously rather than risk truncating a translated result.
+        tokens = (tokens as f64 * 1.5) as usize;
+    }
+
+    tokens.clamp(48, 4096)
 }
