@@ -117,6 +117,7 @@
            });
            external.quarkdown = prev.callPackage ./pkgs/quarkdown.nix {};
            external.lazytask = prev.callPackage ./pkgs/lazytask.nix {};
+           external.textinfer = prev.callPackage ./pkgs/textinfer.nix {};
            # Only quarto itself needs pinning (see the nixpkgs-quarto-pin
            # input comment above for the actual, verified reason) - pandoc
            # is NOT separately overridden here, since its version is
@@ -142,8 +143,9 @@
           ripgrep.enable = true; fd.enable = true;
           # niri.enable = true;  # Disabled - RUSTFLAGS conflict
           noctalia-qs.enable = true; ghostty.enable = true; tesseract.enable = true;
+          textinfer.enable = true;
         };
-        work = {};
+        work = { textinfer.enable = true; };
       };
       tunePackages = tunePackagesByContext.${dotsLocal.context} or {};
 

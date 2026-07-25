@@ -53,9 +53,12 @@ let
   wrappedPackages = lib.filterAttrs (name: opt: opt.enable && opt.scope == "wrapped") cfg.packages;
   
   # Create local tuned packages list
+  # Falls back to pkgs.external.<name> for from-source packages that live
+  # under that namespace (e.g. lazytask, textinfer) rather than as a
+  # plain top-level nixpkgs attribute.
   localTunedPackages = lib.mapAttrsToList (name: opt:
     let
-      pkg = pkgs.${name} or null;
+      pkg = pkgs.${name} or (pkgs.external.${name} or null);
     in
     if pkg == null then builtins.trace "Warning: Package '${name}' not found." null
     else optimizePkg pkg opt
@@ -64,7 +67,7 @@ let
   # Create wrapped packages with suffix
   wrappedTunedPackages = lib.mapAttrsToList (name: opt:
     let
-      pkg = pkgs.${name} or null;
+      pkg = pkgs.${name} or (pkgs.external.${name} or null);
       tunedPkg = optimizePkg pkg opt;
       suffix = opt.suffix or "-tuned";
       mainProgram = pkg.meta.mainProgram or name;

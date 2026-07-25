@@ -34,7 +34,10 @@ in {
     else final: prev:
       lib.mapAttrs (name: opt:
         let
-          pkg = prev.${name} or null;
+          # Falls back to prev.external.<name> for from-source packages
+          # that live under that namespace (e.g. lazytask, textinfer)
+          # rather than as a plain top-level nixpkgs attribute.
+          pkg = prev.${name} or (prev.external.${name} or null);
           getFlags = lang: mode: (dotsLocal.tune.flags.${lang}.${mode} or defaults.${lang}.${mode});
           # Matches tune-support.nix's detectLang, so global-scope tuning
           # can auto-detect Go/Haskell packages too, not just Rust.

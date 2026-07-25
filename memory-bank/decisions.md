@@ -3514,3 +3514,80 @@ pipe-containing description) and `quarto render`'d a note with
 `{{< task-table >}}` - clean render, no `jog.lua` errors, correct
 integer IDs, correct date reformatting, correct pipe/HTML-escaping.
 Cleaned up all scratch vaults/taskdata/PTY harness scripts afterward.
+
+## 2026-07-25: `textinfer` CLI - in-repo Rust source, fetch/load split, tune registration
+
+New CPU-only, in-process (never spawns a server) text summarize/
+paraphrase/translate/title CLI, built on the `mistralrs` crate against
+GGUF models (phi-4 default, Qwen2.5-7B-Instruct as the `--quick`
+alternative). Source lives at `pkgs/textinfer/` (vendored first-party,
+no upstream - unlike `pkgs/lazytask.nix`/`pkgs/quarkdown.nix` which
+`fetchFromGitHub`, `pkgs/textinfer.nix` uses `src = ./textinfer;` and a
+committed `Cargo.lock`), packaged as `external.textinfer` in
+`flake.nix`'s `externalOverlay`, wired up by the always-enabled
+`modules/features/ai-textinfer.nix`.
+
+**Fetch/load split (the actual point of this session's redesign):**
+loading a model by HF repo id (`GgufModelBuilder::new(repo_id, files)`)
+triggers mistralrs' own internal hf-hub network/ETag-freshness checks on
+*every* invocation - measured 30-90s of load time even with the model
+already fully cached, and unpredictable (`HF_HUB_OFFLINE=1` alone made
+this *slower*, 88s, not faster - do not rely on it). Fix: `textinfer`'s
+normal inference path now resolves the GGUF file purely from the local
+hf-hub cache layout via `hf_hub::Cache::from_env().model(repo_id).get(file)`
+(a plain filesystem read, zero network calls - confirmed against
+`hf-hub` 0.4.3's own source), then passes the resolved *local directory*
+(not the repo id) to `GgufModelBuilder::new()` - passing a local path
+makes mistralrs skip its internal hf-hub resolution entirely per its own
+docs ("all remote access is bypassed if you give a path"). Measured load
+time dropped to ~16-18s doing this. If the model isn't cached, inference
+fails fast with `model '<name>' is not downloaded yet - run 'textinfer
+--fetch --model <name>' first` instead of silently downloading.
+Downloading is now exclusively a separate, explicit `textinfer --fetch`
+action (network-only, via `hf_hub::api::sync::ApiBuilder::from_env()`),
+fetching one model (`--model`) or every registry model (no args) - never
+triggered automatically by `ai-textinfer.nix` or any other module.
+
+**RUSTFLAGS via the package-tuning system, not hardcoded in the
+derivation:** per the user's explicit preference (a feature-toggle-style
+"always tuned" switch), `pkgs/textinfer.nix` sets no RUSTFLAGS itself.
+Instead `flake.nix`'s `tunePackagesByContext` registers
+`textinfer.enable = true` for both `priv` and `work` (always-on
+regardless of context, unlike ripgrep/fd which are `priv`-only), and
+`modules/features/ai-textinfer.tune-specs.nix` pins `mode = "fast"`
+(`-C target-cpu=<march> -C opt-level=3 -C codegen-units=1`) - this exact
+combination was measured against a real phi-4 summarize+title job and
+cut generation time from ~141s to ~92.5s (~35%) on the same machine, so
+"fast" (not the tune system's "default" mode, which omits
+`codegen-units=1`) is a specifically-justified choice here, not a
+generic pick. This required two small, reusable, already-committed
+generalizations to the tune-support machinery (`modules/core/
+tune-support.nix`'s `localTunedPackages`/`wrappedTunedPackages` and
+`modules/flake/package-tuning.nix`'s global-scope overlay): both now
+fall back to `pkgs.external.<name>`/`prev.external.<name>` when a plain
+top-level `pkgs.<name>` doesn't exist, since `textinfer` (like
+`lazytask`/`quarkdown`) lives under the `external.*` namespace. Gotcha
+hit once during wiring: the global-scope tune overlay's output packages
+land at the **top-level** name (`final.textinfer`, tuned), not
+`final.external.textinfer` - `ai-textinfer.nix`'s `home.packages` must
+use `pkgs.textinfer or pkgs.external.textinfer` (prefer the tuned
+top-level entry, fall back to the untuned `external.*` one), not
+`pkgs.external.textinfer` directly, or tuning silently never applies.
+
+**Model storage is `$HOME`-relative** (`~/.local/share/textinfer/models`
+by default, `~/.config/textinfer/models.json` for the registry,
+overridable via `--models-dir`/`--models-config` or
+`TEXTINFER_MODELS_DIR`/`TEXTINFER_MODELS_CONFIG`) - `/opt/ai` (used by
+`modules/features/llama-cpp.nix`) is specific to the one machine running
+llama.cpp with CUDA and must not be reused here.
+
+**Validation:** full `nix build .#homeConfigurations.default.
+activationPackage` (with `--override-input dots-local
+"git+file://$HOME/dots-local"`) succeeds; confirmed via the built
+derivation's `.drv` that `RUSTFLAGS` is exactly `-C target-cpu=native -C
+opt-level=3 -C codegen-units=1`; `--help`, `--fetch` (correctly detects
+an already-cached model with zero network calls), and a real end-to-end
+summarize+title run against the cached phi-4 GGUF all verified manually
+before Nix packaging. Home-manager activation itself (`nh home switch`/
+`apply-dots`) was deliberately NOT run by the agent - that mutates the
+user's live environment and is the user's own action to trigger.
