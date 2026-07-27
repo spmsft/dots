@@ -1,0 +1,42 @@
+# Vendored, detached (non-workspace) copy of upstream candle-transformers
+# 0.9.1's `src/` - see ../candle-core/Cargo.toml's header comment for the
+# full rationale. `candle-flash-attn` is kept as an optional dependency
+# (published standalone on crates.io - no vendoring needed) gated behind
+# the `flash-attn` feature: quantized_phi3 (our `phi-4` DEFAULT model's
+# architecture - see modules/features/ai-paratext.nix's `defaultModel`)
+# is the one model family among paratext's three (llama/phi3/qwen2) that
+# candle wires flash-attn into, so this is worth the CUDA-only build-time
+# cost. See pkgs/paratext.nix and src/model.rs for how it's actually
+# enabled/used.
+[package]
+name = "candle-transformers"
+version = "0.9.1"
+edition = "2021"
+description = "Minimalist ML framework."
+repository = "https://github.com/huggingface/candle"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+accelerate-src = { version = "0.3.2", optional = true }
+byteorder = "1.4.3"
+candle = { package = "candle-core", path = "../candle-core", version = "0.9.1" }
+candle-nn = { path = "../candle-nn", version = "0.9.1" }
+candle-flash-attn = { version = "0.9.1", optional = true }
+fancy-regex = "0.13.0"
+intel-mkl-src = { version = "0.8.1", features = ["mkl-dynamic-lp64-iomp"], optional = true }
+num-traits = "0.2.15"
+rand = "0.9.0"
+rayon = "1.7.0"
+serde = { version = "1.0.171", features = ["derive"] }
+serde_json = "1.0.99"
+serde_plain = "1.0.2"
+tracing = "0.1.37"
+
+[features]
+default = []
+accelerate = ["dep:accelerate-src", "candle/accelerate", "candle-nn/accelerate"]
+cuda = ["candle/cuda", "candle-nn/cuda"]
+cudnn = ["candle/cudnn", "candle-nn/cudnn"]
+mkl = ["dep:intel-mkl-src", "candle/mkl", "candle-nn/mkl"]
+flash-attn = ["cuda", "dep:candle-flash-attn"]
+metal = ["candle/metal", "candle-nn/metal"]

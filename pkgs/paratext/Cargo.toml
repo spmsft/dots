@@ -1,0 +1,89 @@
+[package]
+name = "paratext"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "parat"
+path = "src/main.rs"
+
+[dependencies]
+candle-core = "=0.9.1"
+candle-nn = "=0.9.1"
+candle-transformers = "=0.9.1"
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hf-hub = { version = "0.4", default-features = false, features = ["ureq"] }
+core_affinity = "0.8"
+nix = { version = "0.29", features = ["sched"] }
+indicatif = "0.18"
+intel-mkl-src = { version = "0.8", optional = true }
+mimalloc = "0.1"
+
+[features]
+# Deliberately empty by default: cuda/cudnn/mkl are all compile-time-only
+# Cargo features (see model.rs's `pick_device()` for the runtime-side
+# CUDA auto-detect that only applies *within* a cuda-enabled build).
+# pkgs/paratext.nix selects which of these to turn on per machine, gated
+# on dotsLocal.gpu/dotsLocal.machine.cudaComputeCap - see that file and
+# memory-bank/decisions.md's cuda/mkl/cudnn entry for the full rationale.
+# Do NOT add cuda/cudnn to `default`: that would make a plain
+# `cargo build`/`nix build` require a CUDA toolchain unconditionally,
+# breaking non-GPU machines.
+default = []
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+# cudnn implies/requires cuda upstream (candle-core's own `cudnn` feature
+# is `["cuda", "cudarc/cudnn"]`) - listed here for completeness but not
+# currently wired into pkgs/paratext.nix (limited expected benefit for a
+# GEMM-dominated LLM-decode workload; cuDNN mainly accelerates
+# convolutions). Enable manually via `cargo build --features cuda,cudnn`
+# if ever needed.
+cudnn = ["cuda", "candle-core/cudnn", "candle-nn/cudnn", "candle-transformers/cudnn"]
+# CPU-only BLAS backend (Intel MKL) - no GPU/CUDA dependency. Requires
+# `extern crate intel_mkl_src;` in main.rs (see there) to force the
+# linker to actually pull in MKL's native symbols - the Cargo feature
+# alone only makes intel-mkl-src's build.rs run, it doesn't link it in.
+mkl = ["dep:intel-mkl-src", "candle-core/mkl", "candle-nn/mkl", "candle-transformers/mkl"]
+# GPU-only flash-attention kernel (real, published `candle-flash-attn`
+# crate - no vendoring needed, unlike mkl's fork-avoidance trick above).
+# Requires cuda (candle-flash-attn itself depends on candle-core/cuda).
+# Only benefits quantized_phi3 (our `phi-4` default model's architecture)
+# among paratext's three supported model families - candle's
+# quantized_llama/quantized_qwen2 never call into flash-attn regardless.
+# See src/model.rs's Phi3 branch for where `use_flash_attn` is actually
+# threaded through.
+flash-attn = ["cuda", "candle-transformers/flash-attn"]
+
+# Vendored, detached copies of upstream candle-core/candle-nn/
+# candle-transformers 0.9.1 (see vendor/*/Cargo.toml headers and
+# memory-bank/decisions.md's mkl entry): unmodified `src/`, but switched
+# from candle's hardcoded static `intel-mkl-src` feature
+# (`mkl-static-lp64-iomp`, missing the `hgemm_` symbol) to
+# `mkl-dynamic-lp64-iomp`, which links against a real system MKL
+# (nixpkgs' `pkgs.mkl`) instead of intel-mkl-src's broken bundled
+# static 2020.1 redistribution. Applies unconditionally (Cargo has no
+# per-feature [patch]), but is a no-op for non-mkl builds since the only
+# other change from upstream is that one feature string.
+[patch.crates-io]
+candle-core = { path = "vendor/candle-core" }
+candle-nn = { path = "vendor/candle-nn" }
+candle-transformers = { path = "vendor/candle-transformers" }
+
+[profile.release]
+opt-level = 3
+# Cross-crate LTO: tune-specs.nix's "fast" mode already forces
+# codegen-units=1 (measured ~35% faster generation vs mode="default" on
+# a real phi-4 job - see that file's comment), but that only optimizes
+# within a single crate. candle-core/candle-nn/candle-transformers are
+# separate crates, so calls crossing those boundaries (the vast majority
+# of actual tensor-op calls) still aren't inlined/cross-optimized without
+# LTO - this closes that gap. Safe/always-on (unlike panic="abort" below).
+lto = true
+# Deliberately NOT panic = "abort": main.rs's writer/reader worker
+# threads are joined with `.join().map_err(...)` and a single panicking
+# job is reported as one failed job, not a whole-process crash (see
+# spawn_workers()/run around main.rs:559-592). abort would turn that
+# graceful per-job failure into a total process kill.

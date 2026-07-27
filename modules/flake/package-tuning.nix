@@ -35,7 +35,7 @@ in {
       lib.mapAttrs (name: opt:
         let
           # Falls back to prev.external.<name> for from-source packages
-          # that live under that namespace (e.g. lazytask, textinfer)
+          # that live under that namespace (e.g. lazytask, paratext)
           # rather than as a plain top-level nixpkgs attribute.
           pkg = prev.${name} or (prev.external.${name} or null);
           getFlags = lang: mode: (dotsLocal.tune.flags.${lang}.${mode} or defaults.${lang}.${mode});

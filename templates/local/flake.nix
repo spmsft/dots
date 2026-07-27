@@ -63,6 +63,8 @@
       #   sshAddKeysToAgent = "yes";            # "yes"/"no"/"ask"/"confirm"/a duration like "10m"
       #   terminal = "ghostty";                # only used if compositor == "niri"
       #   renderDrmDevice = null;               # let niri auto-detect, or set explicitly
+      #   cudaComputeCap = "89";                # only if gpu == "nvidia": enables parat's cuda build
+      #   mklSupport = true;                    # CPU-only, independent of gpu: enables parat's mkl build
       #   display = {                           # omit entirely to skip power-toggle.sh
       #     output = "eDP-1";
       #     ecoMode = { resolution = "1920x1200"; brightness = "30%"; };

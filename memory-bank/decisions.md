@@ -3591,3 +3591,569 @@ summarize+title run against the cached phi-4 GGUF all verified manually
 before Nix packaging. Home-manager activation itself (`nh home switch`/
 `apply-dots`) was deliberately NOT run by the agent - that mutates the
 user's live environment and is the user's own action to trigger.
+
+## 2026-07-25: `textinfer` → `paratext`/`parat` rename + mistralrs → candle rewrite
+
+**Rewrote the CLI's inference engine from `mistralrs` to raw `candle`**
+(`candle-core`/`candle-nn`/`candle-transformers`) and renamed the
+package `textinfer` → `paratext` (binary `textinfer` → `parat`).
+
+**Why the engine rewrite:** `mistralrs-core` pulled in ~500 transitive
+crates for features this tool never used - MCP/agentic tool-calling, web
+search, image generation (`image`/`ravif`), audio (`symphonia`/
+`rubato`/`hound`/`mistralrs-audio`), HTML scraping, a full async HTTP
+server stack, and PagedAttention/continuous-batching. A GPU-via-
+llama.cpp-bindings alternative was considered first and rejected: both
+mistralrs and candle already expose a `cuda` Cargo feature directly (no
+C++ FFI needed), and the repo's existing `modules/features/llama-cpp.nix`
+is a disabled-by-default, single-machine ("chromaden"), non-Nix-sandbox
+CUDA build producing static libs only - not something a Cargo `build.rs`
+could reproducibly/portably link against. Raw candle was chosen over
+"keep mistralrs + enable its cuda feature" specifically for the
+dependency-bloat/build-time win, accepting the tradeoffs below.
+
+**Architecture:** `model.rs` (new) detects the GGUF's own
+`general.architecture` metadata key at load time and dispatches to the
+matching `candle-transformers::models::quantized_{llama,qwen2,phi3}`
+`ModelWeights` (verified via partial-range GGUF header fetches: phi-4 →
+`phi3`, Qwen2.5-7B → `qwen2`, TinyLlama → `llama`) - no per-model `arch`
+registry field needed. Chat-formatting is a small hardcoded per-arch
+match (Zephyr-style for llama/TinyLlama, ChatML for qwen2, Phi3's own
+`<|system|>`/`<|user|>` tags) rather than parsing the GGUF's
+`tokenizer.chat_template` Jinja template - candle's own reference
+examples use the same hardcoded-per-family approach, and none of the
+three families needed anything more elaborate. EOS token id is read from
+the GGUF's own `tokenizer.ggml.eos_token_id` metadata key when present
+(authoritative per-checkpoint), falling back to a per-arch marker string
+looked up in the tokenizer vocab otherwise. Sampling is deterministic
+greedy (`Sampling::ArgMax`) - appropriate for a strict-JSON-contract
+text-processing tool, not a chat assistant. `run_worker`/the
+single-process dispatch path in `main.rs` dropped `tokio` entirely
+(candle inference is synchronous) - this also shed the `tokio` dependency
+outright, not just mistralrs.
+
+**Tokenizer gap - the one real "not actually free" cost of dropping
+mistralrs:** mistralrs parsed a GGUF's own embedded vocab; candle has no
+equivalent, and none of this registry's GGUF-only repos
+(`microsoft/phi-4-gguf`, `bartowski/Qwen2.5-7B-Instruct-GGUF`,
+`TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF`) ship a `tokenizer.json`
+themselves - verified via the HF API's file-listing endpoint. `registry.
+rs`'s `ModelEntry` therefore gained a required `tokenizer_repo_id` field
+(the original non-GGUF model repo, e.g. `microsoft/phi-4`), and
+`--fetch` now downloads a companion `tokenizer.json` from it alongside
+the GGUF file.
+
+**Performance regression - known, not yet addressed:** end-to-end testing
+against the `--tiny` TinyLlama model measured only ~0.5-1.6 tok/s even
+with `RUSTFLAGS="-C target-cpu=native"` (the same flag the tune-specs
+system applies in the real build) - varying `RAYON_NUM_THREADS` (1/2/4/
+8/16) never got meaningfully faster. This is markedly slower than what
+the mistralrs backend achieved for CPU quantized inference (candle-core's
+stock quantized/k_quants matmul kernels are less optimized than either
+llama.cpp/GGML's hand-tuned SIMD kernels or mistralrs-quant's own
+kernels - a known, documented tradeoff of depending on candle-core's
+quantized ops directly rather than a project that's invested in
+CPU-kernel-level tuning on top of it). Not fixed in this pass - flagged
+here so it isn't silently reintroduced/rediscovered from scratch; a
+future pass could look at candle's `mkl`/`accelerate` BLAS backend
+features, or reconsider this whole tradeoff if CPU throughput turns out
+to matter more than the dependency/build-time win.
+
+**Rename scope:** `pkgs/textinfer/` → `pkgs/paratext/` (`Cargo.toml`
+`name = "paratext"` + explicit `[[bin]] name = "parat"`), `pkgs/
+textinfer.nix` → `pkgs/paratext.nix` (`pname`/`mainProgram` updated),
+`modules/features/ai-textinfer.nix` → `ai-paratext.nix`
+(`features.textinfer` → `features.paratext`, `~/.config/textinfer/` →
+`~/.config/paratext/`), `ai-textinfer.tune-specs.nix` → `ai-paratext.
+tune-specs.nix` (tune-spec key `textinfer` → `paratext` - this key must
+match the derivation `pname` for the tune-support system to find it),
+`flake.nix`'s `externalOverlay`/`tunePackagesByContext` entries,
+`modules/composition.nix`'s import, and all `TEXTINFER_*` env vars →
+`PARATEXT_*`. Older dated entries above this one that still say
+`textinfer` are left as-is (historical log, not rewritten).
+
+**Validation:** `cargo build --release` clean (no warnings after a
+couple of fixups); confirmed the produced binary is named `parat` under
+package `paratext`; a real `--fetch --tiny` + piped `--passthrough`/
+`--summarize` run against the actual TinyLlama GGUF + its companion
+tokenizer.json produced coherent (if verbose/non-JSON-compliant - a tiny
+1.1B model's own instruction-following limit, consistent with its
+"smoke-test only" registry documentation) English output, respecting
+`--max-tokens` and streaming tok/s progress correctly. Full `nix build
+.#homeConfigurations.default.activationPackage --override-input
+dots-local "git+file://$HOME/dots-local"` succeeds after `git add`-ing
+the new `pkgs/paratext/src/model.rs` (Nix's git-tracked source filtering
+silently excludes untracked files - a build failure this produced,
+worth remembering for any future new-file-in-package situation);
+confirmed the built activation package has `parat` on `$PATH`, `pkgs.
+paratext` registered as the tuned top-level package, and `~/.config/
+paratext/models.json` rendered with the new `tokenizer_repo_id` field
+per model.
+
+## 2026-07-26: `parat`/`paratext` cuda/mkl/cudnn feature wiring
+
+User asked whether cuda/mkl (Cargo features just added to
+`pkgs/paratext/Cargo.toml`) can be enabled "by flag/auto-detect", and
+what cudnn would add.
+
+**Findings (verified against candle-core/candle-nn/candle-transformers'
+actual upstream `Cargo.toml` feature graphs, fetched from GitHub
+`main`):**
+- `cuda`, `mkl`, `cudnn` are all Cargo **compile-time** features - a
+  single binary can't toggle "compiled with cuda support" at runtime.
+  "Auto-detect" only applies *within* an already cuda-enabled build:
+  `model.rs`'s `pick_device()` already does this correctly (tries
+  `Device::new_cuda(0)`, falls back to CPU if no GPU present at
+  runtime) - that part needed no change.
+- `cudnn = ["cuda", ...]` upstream - requires/implies `cuda`, can't be
+  enabled standalone. Not wired into the Nix build: cuDNN mainly
+  accelerates convolutions, offering little expected benefit for this
+  GEMM-dominated LLM-decode workload. Left defined in Cargo.toml as a
+  documented, manually-enablable feature only.
+- `mkl = ["dep:intel-mkl-src", ...]` is CPU-only, no GPU dependency -
+  initially looked like a promising fix for the documented candle
+  CPU-decode performance regression (see the rewrite entry above).
+  **Tested directly** (`cargo build --release --features mkl`, outside
+  Nix): intel-mkl-src's build.rs downloaded a real static MKL
+  redistribution successfully, but linking failed with `undefined
+  symbol: hgemm_` - candle-core's mkl matmul path calls the
+  half-precision GEMM entry point, which isn't present in
+  intel-mkl-src 0.8.1's default static MKL package. This is a genuine,
+  reproducible incompatibility between candle 0.9.2 and intel-mkl-src
+  0.8.1's current default feature set, **not** a Nix-sandbox/packaging
+  problem. Decision: keep the `mkl` Cargo feature defined (for future
+  revisiting once upstream fixes it, or a differently-configured
+  intel-mkl-src variant is tried) but leave it OFF by default in both
+  Cargo.toml (`default = []`) and `pkgs/paratext.nix` (`mklSupport ?
+  false`, documented as known-broken).
+- Also required adding `#[cfg(feature = "mkl")] extern crate
+  intel_mkl_src;` to `main.rs` - enabling candle's `mkl` feature alone
+  only makes `intel-mkl-src`'s build.rs run; without the explicit
+  `extern crate`, the linker never actually pulls in MKL's native
+  symbols (documented behavior, confirmed via candle's own examples).
+
+**cuda wiring implemented ("build only cuda when available" per user
+request):**
+- `pkgs/paratext.nix` gained `cudaSupport ? false`, `cudaComputeCap ?
+  null`, `cudaPackages ? null`, `mklSupport ? false`, `mkl ? null`
+  arguments. `cudaSupport` only takes effect if `cudaComputeCap` is
+  also non-null - throws a clear error otherwise, since a Nix build
+  sandbox has no physical GPU to auto-detect a compute capability from
+  (confirmed via candle-kernels' `build.rs`, which uses the
+  `cudaforge` crate's `CUDA_COMPUTE_CAP` env var / `nvidia-smi` query
+  fallback chain - the env var is the only option available in a
+  sandboxed build). When cuda is enabled: adds
+  `cudaPackages.cuda_nvcc` to `nativeBuildInputs`,
+  `cudaPackages.{cuda_cudart,cuda_cccl}` to `buildInputs`, sets
+  `CUDA_COMPUTE_CAP` env to the given value, and adds `"cuda"` to
+  `buildFeatures`.
+- `modules/local/schema.nix` gained `machine.cudaComputeCap` (nullOr
+  str, default null) - the bare-integer compute-cap string (e.g. "89",
+  "120") a given host's Nvidia GPU needs, parallel in spirit to
+  `llama-cpp.nix`'s hardcoded `CMAKE_CUDA_ARCHITECTURES=120` but
+  properly parameterized per-host here (paratext, unlike llama-cpp.nix,
+  is meant to be portable across machines, not single-host). Per the
+  standing "changing schema.nix" rule, also updated
+  `templates/local/flake.nix`'s commented example.
+- `flake.nix`'s `externalOverlay` now calls `pkgs/paratext.nix` with
+  `cudaSupport = dotsLocal.gpu == "nvidia"; cudaComputeCap =
+  dotsLocal.machine.cudaComputeCap;` - `cudaPackages`/`mkl` themselves
+  are auto-wired by `callPackage` from the ambient `prev` package set
+  (both are real top-level nixpkgs attributes, confirmed via `nix eval`
+  on this host's nixpkgs pin), no explicit passing needed. The
+  package-tuning overlay (`modules/flake/package-tuning.nix`) needed NO
+  changes - it only `overrideAttrs`s the already-built
+  `prev.external.paratext` derivation to inject `RUSTFLAGS`, it doesn't
+  re-invoke `callPackage`.
+- This dev host has no `dotsLocal.gpu == "nvidia"`, so cudaSupport
+  correctly resolves to `false` here and no CUDA toolchain was pulled
+  in - confirmed via `ldd` on the built `parat` binary (no libmkl/libcuda
+  linked) and a full default-args package + full activation-package
+  build, both green. Cuda-enabled compilation itself was **not**
+  build-tested end-to-end on real hardware in this session (no Nvidia
+  GPU on this host) - flagged for verification whenever this is first
+  actually run on an Nvidia-equipped `dots-local` host with
+  `gpu = "nvidia"` and `machine.cudaComputeCap` set.
+
+## 2026-07-26: llama-cpp.nix CUDA gating; MKL fix investigation; per-worker thread cap
+
+**1. `llama-cpp.nix` now gates CUDA on `dotsLocal.gpu == "nvidia"`.** Its
+`setup-llama-cpp` script runs directly on the target machine (clones +
+`cmake`-builds llama.cpp into `~/.local/share/llama-cpp-chromaden` at
+runtime), NOT inside the Nix build sandbox - so unlike
+`pkgs/paratext.nix`, it genuinely can auto-detect the GPU's compute
+capability via CMake's `-DCMAKE_CUDA_ARCHITECTURES=native` (queries
+nvcc/the real GPU present at that time). Replaced the hardcoded
+`CMAKE_CUDA_ARCHITECTURES=120` with `native`, and made the whole set of
+CUDA-only cmake flags/env exports (`GGML_CUDA`, `CMAKE_CUDA_ARCHITECTURES`,
+`GGML_CUDA_FA_ALL_QUANTS`, `CMAKE_CUDA_HOST_COMPILER`, `CMAKE_CUDA_FLAGS`,
+the `CUDA_HOME`/`gcc-15` build-env exports, the `cuda-llama`/`gcc15`/
+`gcc15-libs` alien packages, `CUDA_HOME` sessionVariable) conditional on
+a new `cudaEnabled = dotsLocal.gpu == "nvidia"` local, computed the same
+way as `pkgs/paratext.nix`'s `cudaSupport`. `vulkan-llama` stays
+unconditional (cross-vendor). This makes the feature safe to enable on
+a non-Nvidia machine too (falls back to a CPU+Vulkan llama.cpp build)
+rather than assuming CUDA is always wanted whenever `enable = true`.
+
+**2. Investigated fixing MKL's `hgemm_` link failure (from the previous
+entry) - concluded NOT to pursue it.** Root cause confirmed precisely:
+`candle-core/src/mkl.rs` declares `hgemm_` (Fortran-style half-precision
+GEMM) as an unconditional `extern "C"` binding, always required at link
+time whenever the `mkl` feature is on (regardless of whether any F16
+matmul actually runs) - and per upstream issue
+huggingface/candle#2793 (open since March 2025, still unresolved),
+`intel-mkl-src`'s own auto-downloaded static MKL bundle (2020.1) never
+had this symbol, while a real, currently-installed Intel oneMKL (2023.1+
+oneAPI) reportedly does, IF linked dynamically via `libmkl_rt.so`
+instead of the crate's default static mode.
+  - Verified this concretely: built `pkgs.mkl` from this nixpkgs pin
+    (real oneAPI 2023.1.0 rpm redistribution, not the ancient 2020.1
+    bundle) and confirmed via `nm -D libmkl_rt.so` that it DOES export
+    `hgemm_`, `sgemm_`, `dgemm_` directly.
+  - Tried wiring our own `intel-mkl-src` dependency entry to
+    `default-features = false, features = ["mkl-dynamic-lp64-iomp"]`
+    (to point it at that dynamic `libmkl_rt.so` instead of downloading
+    its own bundle) - this does NOT work: Cargo unifies features across
+    the whole dependency graph for a single crate/platform, and
+    candle-core's own `Cargo.toml` requests `intel-mkl-src`'s *default*
+    feature (the static `mkl-static-lp64-iomp` config) without
+    `default-features = false` - so both the static default AND our
+    dynamic override get enabled simultaneously, which crashes
+    `intel-mkl-src`'s own build script (`error[E0428]: the name
+    'MKL_CONFIG' is defined multiple times`, since its
+    `def_mkl_config!` macro is invoked twice with conflicting configs).
+  - The only way to actually fix this from our side would be
+    maintaining a `[patch.crates-io]` override pointing at a modified
+    fork of `intel-mkl-src` (with `default = []` in its own manifest) -
+    a real, permanent maintenance burden for a first-party tool in a
+    dotfiles repo, fixing an issue that's been open upstream for over a
+    year with no indication of being prioritized. **Decision: not worth
+    it.** Reverted the Cargo.toml experiment back to the plain
+    `intel-mkl-src = { version = "0.8", optional = true }` entry (still
+    unused/off by default; `mkl` remains a documented, known-broken,
+    opt-in-only Cargo feature per the previous entry). Downgrading
+    candle-core/intel-mkl-src does NOT help either - the bundled static
+    MKL's vintage (2020.1) predates the symbol regardless of which
+    candle-core minor version is used, and the issue reproduces on
+    current (`main`) candle per the still-open GH issue.
+
+**3. Fixed a real, currently-applicable thread-oversubscription gap** in
+worker dispatch (unrelated to MKL, applies to candle's current
+rayon-based CPU kernels right now): `topology::pin_current_process()`
+restricts a worker's *scheduling* affinity to its assigned core group,
+but rayon's global thread pool - which candle-core's gemm/quantized
+kernels use internally - defaults to spawning one thread per *visible*
+logical CPU, ignoring that affinity mask entirely. Fixed in
+`run_worker()` (main.rs) by setting `RAYON_NUM_THREADS` (and,
+defensively, `OMP_NUM_THREADS`/`MKL_NUM_THREADS` for if MKL is ever
+unblocked per point 2) to the exact pinned core count, before
+`load_model()` triggers any rayon-consuming candle op - this is what
+actually enforces the intended "1 worker per CCD, 1 thread per physical
+core max" design end-to-end, not just the affinity mask alone. The
+single-process (workers <= 1) path is intentionally left unbounded, to
+use the whole machine for a single interactive job as before.
+
+**Validation:** `cargo build --release` clean for all of the above;
+full `nix build .#homeConfigurations.default.activationPackage
+--override-input dots-local "git+file://$HOME/dots-local"` succeeds
+(this dev host has no `dotsLocal.gpu == "nvidia"`, so it validates the
+CPU-only/no-CUDA path for both `paratext` and `llama-cpp.nix`; the
+CUDA-enabled path for either was not build-tested end-to-end on real
+Nvidia hardware this session).
+
+## 2026-07-26: MKL fix reversed - now actually working, plus flash-attn/LTO/mimalloc
+
+The prior entry's "not worth it" call on MKL is **reversed** - re-evaluated
+per explicit user request ("if the change set is small, it's absolutely
+worth it") and the real fix turned out to be small and self-contained:
+
+**1. MKL now genuinely links and runs.** Root cause was narrower than
+first thought: the *only* substantive problem is candle's own workspace
+root `Cargo.toml` hardcoding `intel-mkl-src`'s feature to
+`mkl-static-lp64-iomp` (the broken static 2020.1 bundle missing
+`hgemm_`). Every candle crate we use just inherits that via
+`workspace = true` - so the fix doesn't require a `[patch.crates-io]`
+fork of `intel-mkl-src` itself (rejected in the prior entry); it only
+requires detaching **candle-core/candle-nn/candle-transformers** from
+candle's workspace. Implemented as `pkgs/paratext/vendor/{candle-core,
+candle-nn,candle-transformers}/`: unmodified `src/` copied verbatim from
+the upstream 0.9.1 tag (~3.9MB total), with hand-written Cargo.toml
+manifests using literal dependency versions instead of `workspace = true`
+- the ONLY substantive change from upstream is `intel-mkl-src`'s feature:
+`mkl-dynamic-lp64-iomp` instead of `mkl-static-lp64-iomp`. Wired in via
+`[patch.crates-io]` in `pkgs/paratext/Cargo.toml`. `candle-kernels`,
+`candle-metal-kernels`, `ug`/`ug-cuda`/`ug-metal`, and `candle-flash-attn`
+are all real, independently-published crates.io packages (verified via
+the sparse index, not just `cargo build` resolution) - none of those
+needed vendoring, only the three crates that actually declare
+`intel-mkl-src = { workspace = true }`.
+
+  - **Gotcha: `[patch.crates-io]` silently did nothing at first.**
+    paratext's own `candle-core = "0.9"` requirement resolved to the
+    newest matching crates.io release (0.9.2, which has no matching git
+    tag - apparently a registry-only point release), while our vendored
+    manifests declared `version = "0.9.1"` (matching the tag we cloned
+    from) - Cargo's patch mechanism requires the patched crate's version
+    to match what the dependency graph actually selects, so it fell back
+    to the plain registry crate with a silent `warning: patch ... was not
+    used in the crate graph` (easy to miss). Fixed by pinning paratext's
+    own deps to the exact vendored version (`candle-core = "=0.9.1"` etc,
+    not just `"0.9"`) so resolution can only pick 0.9.1, which only the
+    patch provides. **Always verify a `[patch]` actually took effect** by
+    checking `Cargo.lock` for the patched crate having no
+    `source = "registry+..."` line (path dependencies have none) - a
+    successful build alone does NOT prove the patch was used, since Cargo
+    silently falls back to the registry version when a patch doesn't
+    match.
+  - **Gotcha: dynamic MKL needs `-Wl,--no-as-needed`, not just the right
+    Cargo feature.** MKL's dynamic layered libraries
+    (`libmkl_intel_lp64.so`/`libmkl_intel_thread.so`/`libmkl_core.so`/
+    `libiomp5.so`) cross-reference each other via weak symbols resolved
+    through the process's global symbol table at runtime, NOT via
+    `DT_NEEDED` entries (`readelf -d libmkl_intel_lp64.so` shows only
+    `libdl.so.2` as NEEDED - nothing links it to the other three). Our
+    own code only directly references symbols re-exported by
+    `libmkl_intel_lp64.so` (`sgemm_`/`dgemm_`/`hgemm_`), so the default
+    `--as-needed` linker behavior dropped `mkl_intel_thread`/`mkl_core`/
+    `iomp5` from the final binary entirely (verified via `ldd` showing
+    only one of the four libs linked), causing an `undefined symbol:
+    mkl_blas_dgemm` **runtime** error (not a link-time error - passed
+    `cargo build` fine, only failed when actually running the binary).
+    Fixed with `RUSTFLAGS="-C link-arg=-Wl,--no-as-needed"` for manual
+    `cargo build --features mkl` testing, and `env.NIX_LDFLAGS =
+    "--no-as-needed"` (only under `mklEnabled`) in `pkgs/paratext.nix`
+    for the real Nix build. Also added a `postFixup` `patchelf
+    --add-rpath "${mkl}/lib"` so `parat` finds MKL's shared libs at
+    runtime without requiring callers to set `LD_LIBRARY_PATH`
+    themselves.
+  - Verified end-to-end: `ldd` shows all four MKL/iomp5 libs linked,
+    `parat --help` runs cleanly both from a plain `cargo build --release
+    --features mkl` binary AND from a real `nixpkgs.callPackage
+    pkgs/paratext.nix { mklSupport = true; mkl = nixpkgs.mkl; }` build.
+    `pkgs/paratext.nix`'s stale "known-broken, do not enable" comment
+    block has been rewritten to describe the actual fix.
+
+**2. Enabled `flash-attn` as a Cargo feature, gated on `cuda`.** Of
+paratext's three supported model architectures (`quantized_llama`,
+`quantized_phi3`, `quantized_qwen2`), only `quantized_phi3` has any
+flash-attn wiring in candle-transformers at all - and that happens to be
+our **default model's architecture** (`phi-4`, per
+`modules/features/ai-paratext.nix`'s `defaultModel`), not an edge case.
+`candle-flash-attn` 0.9.1 is a real, independently-published crates.io
+crate (verified via the sparse index) - no vendoring needed, just an
+optional dependency re-added to `vendor/candle-transformers/Cargo.toml`
+plus a `flash-attn = ["cuda", "candle-transformers/flash-attn"]` feature
+in `pkgs/paratext/Cargo.toml`. GPU-only (requires `cuda`); CPU builds are
+unaffected.
+
+**3. Cross-crate LTO** (`lto = true` in `pkgs/paratext/Cargo.toml`'s
+`[profile.release]`): the existing tune-specs.nix "fast" mode's
+`codegen-units=1` only optimizes within a single crate, but
+candle-core/candle-nn/candle-transformers are separate crates - the vast
+majority of actual tensor-op calls cross those boundaries and weren't
+being inlined/cross-optimized without this. Safe, always-on, no feature
+gate needed.
+
+  - **Deliberately did NOT set `panic = "abort"`** despite it being
+    another commonly-suggested release-profile tweak: `main.rs`'s
+    worker/writer threads are explicitly joined with
+    `.join().map_err(|_| anyhow::anyhow!("... panicked"))` so a single
+    job's panic is reported as one failed job, not a whole-batch crash
+    (see `spawn_workers`/`run_worker` around main.rs:559-592) - `abort`
+    would turn that intentional per-job fault isolation into a total
+    process kill. Verified no `catch_unwind` usage exists that this
+    would otherwise help.
+
+**4. `mimalloc` as the global allocator** (`#[global_allocator]` in
+`main.rs`, unconditional/no feature gate) - candle's tensor ops do heavy
+small/medium heap churn per op; mimalloc's thread-caching design is a
+known-good drop-in replacement for glibc's malloc for this kind of
+workload. Not upstream-candle-precedented or independently benchmarked
+in this repo (unlike tune-specs.nix's measured "fast" mode number) - a
+reasonable, low-risk default rather than a measured decision.
+
+**5. `MKL_DYNAMIC=FALSE`/`OMP_DYNAMIC=FALSE`** added alongside the
+existing per-worker `RAYON_NUM_THREADS`/`OMP_NUM_THREADS`/
+`MKL_NUM_THREADS` cap in `run_worker()` (main.rs) - without these, MKL/
+OpenMP can dynamically scale the thread count *down* under perceived
+contention from sibling workers pinned to other CCDs, defeating the
+fixed-size cap and making generation latency unpredictable across
+concurrent workers.
+
+**Bug found and fixed along the way:** the entire `pkgs/paratext/vendor/`
+directory (250 files) was created but never `git add`ed, so the flake's
+git-filtered source silently excluded it - `nix build`/`apply-dots` was
+building without the vendor patch at all until this was caught
+(`error: failed to read vendor/candle-core/Cargo.toml: No such file or
+directory` during a real `apply-dots` run). **Any new file added under a
+package's source tree must be `git add`ed before it will be visible to a
+flake-driven Nix build** - a successful standalone `cargo build` does NOT
+prove the Nix packaging will see the same files, since Cargo reads the
+working tree directly while Nix flakes read only the git index/tracked
+files.
+
+**Validation:** manual `cargo build --release --features mkl` (with
+`MKLROOT`/`LIBRARY_PATH` pointed at a manually-built `nixpkgs.mkl`) links
+and runs cleanly; a standalone `nixpkgs.callPackage pkgs/paratext.nix
+{ mklSupport = true; mkl = nixpkgs.mkl; }` build succeeds end-to-end; a
+full real `apply-dots` run (default, non-mkl, non-cuda build for this
+host) completes activation successfully with the vendored patch,
+flash-attn feature wiring, LTO, and mimalloc all in place, and the
+installed `parat --help` runs correctly.
+
+## 2026-07-26: MKL wired into dots-local via new `machine.mklSupport`; NUMA-aware worker grouping
+
+**dots-local wiring.** Added `machine.mklSupport` (bool, default `false`)
+to `modules/local/schema.nix`, next to the existing `machine.
+cudaComputeCap`. Wired it into `flake.nix`'s `externalOverlay`:
+`external.paratext = prev.callPackage ./pkgs/paratext.nix { cudaSupport
+= dotsLocal.gpu == "nvidia"; cudaComputeCap = dotsLocal.machine.
+cudaComputeCap; mklSupport = dotsLocal.machine.mklSupport; mkl = prev.
+mkl; }`. Unlike `cudaSupport` (gated on the `gpu` axis), `mklSupport` is
+CPU-only and independent of any GPU field - a machine can have both,
+either, or neither enabled. `pkgs.mkl` needs `config.allowUnfree = true`,
+already set repo-wide in `flake.nix`'s two `nixpkgs.legacyPackages`/
+`import nixpkgs` calls, so no extra unfree-allow plumbing was needed.
+
+Set `machine.mklSupport = true` in `dots-local/flake.nix` for this
+machine ("lub": AMD Ryzen AI 7 PRO 350, integrated Radeon 860M only, no
+discrete Nvidia GPU, single NUMA node) - it's CPU-bound for `parat` by
+necessity, and MKL now genuinely links and runs (see the prior "MKL fix
+reversed" entry). Left `gpu` unset (null) - no Nvidia hardware, and
+setting `gpu = "amd"` wasn't evaluated/needed for this request since
+nothing currently branches on the AMD case for this host's actual usage.
+
+Updated `templates/local/flake.nix`'s commented `machine = { ... }`
+example block with `mklSupport = true;  # CPU-only, independent of gpu:
+enables parat's mkl build`, per this repo's standing rule that any
+`schema.nix` field needs a template mention in the same change.
+`setup.sh`'s "Next steps" text already points at `dots-local-options` for
+the full field list rather than enumerating fields itself, so it needed
+no change.
+
+Validated via `nix build .#homeConfigurations.default.activationPackage
+--override-input dots-local "git+file:///home/sp/dots-local"`: `parat`
+rebuilt with the `mkl` feature end-to-end (`cargoBuildHook` compiled the
+vendored candle patch + mimalloc + flash-attn-capable transformers, MKL
+libs linked via the existing `--no-as-needed`/rpath fix), full home-
+manager activation succeeded.
+
+**NUMA mechanical sympathy (`pkgs/paratext/src/topology.rs`).** Prior
+worker-core grouping used `/sys/devices/system/cpu/cpuN/topology/die_id`
+(CCD) as a proxy for memory locality. This is only a reliable NUMA proxy
+on NPS1-configured AMD parts - on multi-socket/NPS>1 EPYC hosts a single
+CCD can be split across NUMA nodes, or several CCDs merged into one
+node, so grouping by CCD alone could still let a worker's threads span a
+real memory-locality boundary. Added `node_id_for_core()`, reading the
+kernel's authoritative `/sys/devices/system/cpu/cpuN/node{M}` symlink
+(confirmed present and correctly reporting `node0` on this machine's
+single-node topology via `ls -d /sys/devices/system/cpu/cpu0/node*`), and
+made it the primary grouping key in `cores_by_die()`/
+`physical_cores_by_die()`, falling back to `die_id` only when no `node*`
+symlink exists (non-NUMA kernel builds, sandboxes). Kept the existing
+public function names (`physical_cores_per_die`, `plan_workers`,
+`pin_current_process`) unchanged to avoid unnecessary churn in
+`main.rs`/`cli.rs`'s user-facing help text - only internal grouping logic
+and doc comments changed.
+
+This change is low-risk/high-leverage specifically *because* `main.rs`'s
+`run_worker()` already calls `topology::pin_current_process(&cores)`
+**before** `load_model()` (confirmed at call sites, line ~459 vs ~487) -
+Linux's default "local" memory allocation policy means a thread's first
+touch of a page (e.g. mmap'd GGUF weights during model load) allocates
+that page on the NUMA node the thread is currently running on. Since
+affinity is pinned before any model loading happens, correctly grouping
+cores by real NUMA node (rather than CCD) directly and immediately
+improves memory locality with no further explicit `numactl`/`libnuma`
+membind code needed - no new dependency, no runtime behavior change
+beyond which node's DRAM gets used.
+
+**Not done / explicitly out of scope:** no explicit `numactl --membind`/
+`libnuma` binding was added (unnecessary given the pin-before-load
+ordering above); no live multi-node validation was possible on this
+machine (single NUMA node) - the change is a correctness fix on paper,
+verified only by inspecting `/sys` layout and by successful compilation,
+not by observing an actual before/after latency difference on real
+multi-node hardware. Flag for review if this is ever run on a genuine
+multi-socket/NPS>1 host.
+
+## 2026-07-27: mmap-based zero-copy GGUF model loading in vendored candle
+
+**Problem:** `parat`'s GGUF model load took ~31s for the default phi-4
+(8.5GB Q4_K) model even though a raw sequential `cat` of the same
+warm-page-cache file took ~0.4s - a ~77x gap purely from candle's own
+per-tensor parsing, not disk I/O. Root cause: candle's stock GGUF path
+copies every tensor's bytes **twice** - `TensorInfo::read()`
+(`vendor/candle-core/src/quantized/gguf_file.rs`) does `seek`+
+`read_exact` into a fresh heap `Vec<u8>`, then `from_raw_data()`
+(`vendor/candle-core/src/quantized/ggml_file.rs`) does `.to_vec()` again
+to build the final `Vec<T>` stored in `QStorage::Cpu`. Upstream candle
+itself has an unaddressed `// TODO: Mmap version to avoid copying the
+data around?` comment at `ggml_file.rs`'s `read_one_tensor` - this is a
+known, real gap in candle, not something specific to our vendoring.
+
+**Fix implemented (all in the vendored forks, consistent with the
+existing MKL-patch precedent of editing vendored candle/candle-
+transformers directly):**
+- `vendor/candle-core/src/quantized/mod.rs`: added `MmapedBlocks<T>`, a
+  read-only `QuantizedType` impl that borrows `data: &'static [T]`
+  directly from an `Arc<memmap2::Mmap>` kept alive in the same struct
+  (`_mmap` field) instead of owning a `Vec<T>`. `from_float` (only used
+  when *writing*/quantizing, never during inference load) bails since
+  the storage is read-only.
+- `vendor/candle-core/src/quantized/ggml_file.rs`: added
+  `qtensor_from_mmap`/`from_mmap_data`, mirroring the existing
+  `qtensor_from_ggml`/`from_raw_data` dtype-dispatch, but slicing
+  straight from the mmap. `Device::Cpu` builds `MmapedBlocks` (zero
+  copy); `Metal`/`Cuda` still slice from the mmap (saves the read()/
+  seek() syscalls + one intermediate `Vec<u8>` vs. the old path) then
+  fall through to the same unavoidable host->device upload copy.
+- `vendor/candle-core/src/quantized/gguf_file.rs`: added
+  `TensorInfo::read_from_mmap`; introduced a new `TensorSource` trait
+  (`load_tensor(&mut self, info, tensor_data_offset, device) ->
+  Result<QTensor>`) with a blanket `impl<R: Read + Seek> TensorSource for
+  R` (so every existing `Read+Seek`-based caller keeps compiling
+  unchanged) plus a new `MmapSource` (wraps `Arc<memmap2::Mmap>`,
+  `unsafe fn open(path)` - safety contract inherited from
+  `memmap2::MmapOptions::map`, same as candle's own pre-existing
+  `MmapedSafetensors::new`). `Content::tensor` is now generic over
+  `S: TensorSource` instead of `R: Read + Seek` directly.
+- `vendor/candle-transformers/src/models/{quantized_llama,quantized_phi3,
+  quantized_qwen2}.rs`: mechanical signature-only change - each
+  `from_gguf`'s generic bound (and phi3's `QLinear::new` helper) changed
+  from `R: std::io::Read + std::io::Seek` to
+  `S: candle::quantized::gguf_file::TensorSource`, param renamed `R` ->
+  `S`. **No call-site bodies changed** - every `ct.tensor(reader, name,
+  device)` call across all three files is untouched, since `Content::
+  tensor` itself now dispatches through `TensorSource`.
+- `src/model.rs`: `LoadedModel::load()` still opens the file normally via
+  `std::fs::File` to parse the (small) GGUF header/metadata via
+  `Content::read`, then drops that handle and opens an `unsafe {
+  gguf_file::MmapSource::open(gguf_path) }` for the actual tensor-loading
+  `from_gguf` calls.
+
+**Why this shape and not a smaller "just avoid the second `.to_vec()`"
+patch:** the user explicitly asked for the mmap/zero-copy option ("Option
+1 for now") in the prior turn's ranked list, which also uniquely enables
+future benefit for the multi-worker subprocess architecture (separate OS
+processes mmap'ing the same file share the same read-only physical pages
+via the page cache, rather than each worker paying its own private
+in-process copy cost) - a smaller doubled-copy-avoidance patch wouldn't
+provide that cross-process sharing property.
+
+**Validated:** `cargo build --release` clean (only pre-existing,
+unrelated warnings); measured model load time for the default phi-4
+(8.5GB Q4_K) model dropped from ~31s to a consistent ~1.7-2.6s across
+repeated runs (~12-18x faster), matching the ~0.4s raw-I/O floor plus
+residual per-tensor `QTensor`/metadata construction overhead. Generation
+throughput itself (tokens/sec) is unaffected by this change and remains a
+separate, already-flagged, out-of-scope slow-generation issue.
+
+**Not done / explicitly out of scope:** did not touch the GPU
+(CUDA/Metal) load path's actual behavior beyond syscall/allocation
+savings - the host->device upload copy for those devices is unavoidable
+and unchanged. Did not attempt a "resident daemon keeps mmap warm across
+invocations" design (that's the separate, previously-flagged, explicitly
+out-of-scope "persistent daemon" option (c) from the initial exploration
+- would reverse this project's in-process, no-server design decision and
+needs explicit sign-off if ever revisited).

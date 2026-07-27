@@ -117,7 +117,22 @@
            });
            external.quarkdown = prev.callPackage ./pkgs/quarkdown.nix {};
            external.lazytask = prev.callPackage ./pkgs/lazytask.nix {};
-           external.textinfer = prev.callPackage ./pkgs/textinfer.nix {};
+           # cudaSupport gated on dotsLocal.gpu == "nvidia" ("build only
+           # cuda when available" per user request) - mirrors rules.nix's
+           # existing gpu axis convention (llama-cpp.enable/ai-apps' "pi"
+           # toggle). cudaComputeCap comes from dotsLocal.machine (must
+           # be set explicitly per-host; see modules/local/schema.nix and
+           # pkgs/paratext.nix's own doc comment for why it can't be
+           # auto-detected in a Nix sandbox). mklSupport is a plain,
+           # independent per-machine opt-in (no GPU dependency) - see
+           # modules/local/schema.nix's machine.mklSupport and
+           # memory-bank/decisions.md's MKL fix entries.
+           external.paratext = prev.callPackage ./pkgs/paratext.nix {
+             cudaSupport = dotsLocal.gpu == "nvidia";
+             cudaComputeCap = dotsLocal.machine.cudaComputeCap;
+             mklSupport = dotsLocal.machine.mklSupport;
+             mkl = prev.mkl;
+           };
            # Only quarto itself needs pinning (see the nixpkgs-quarto-pin
            # input comment above for the actual, verified reason) - pandoc
            # is NOT separately overridden here, since its version is
@@ -143,9 +158,9 @@
           ripgrep.enable = true; fd.enable = true;
           # niri.enable = true;  # Disabled - RUSTFLAGS conflict
           noctalia-qs.enable = true; ghostty.enable = true; tesseract.enable = true;
-          textinfer.enable = true;
+          paratext.enable = true;
         };
-        work = { textinfer.enable = true; };
+        work = { paratext.enable = true; };
       };
       tunePackages = tunePackagesByContext.${dotsLocal.context} or {};
 

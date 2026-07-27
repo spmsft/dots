@@ -208,6 +208,40 @@ in {
             '';
           };
 
+          cudaComputeCap = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = ''
+              CUDA compute capability of this machine's GPU as a bare
+              integer string (e.g. "89" for Ada Lovelace, "120" for
+              Blackwell consumer cards) - the same value CMake's
+              CMAKE_CUDA_ARCHITECTURES and candle's build-time
+              CUDA_COMPUTE_CAP env var both expect. Only consulted when
+              gpu == "nvidia": pkgs/paratext.nix builds `parat` with its
+              `cuda` Cargo feature enabled only if both gpu == "nvidia"
+              AND this is set (see flake.nix's externalOverlay) -
+              deliberately not auto-detected at build time, since a Nix
+              sandbox has no physical GPU to query. Leave null on
+              non-Nvidia or CPU-only machines.
+            '';
+          };
+
+          mklSupport = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Build `parat` (paratext) with its CPU-only `mkl` Cargo
+              feature enabled, linking Intel MKL (via nixpkgs' `pkgs.mkl`,
+              dynamically) for faster CPU GEMM. Independent of `gpu`/
+              `cudaComputeCap` (no GPU needed). See
+              memory-bank/decisions.md's dated MKL entries for the fix
+              history - it now genuinely links and runs, so this is safe
+              to enable on any x86_64 machine expected to run `parat`
+              CPU-bound (i.e. without an Nvidia GPU, or as a CPU fallback
+              even with one). Consumed by flake.nix's externalOverlay.
+            '';
+          };
+
           display = mkOption {
             default = null;
             description = ''

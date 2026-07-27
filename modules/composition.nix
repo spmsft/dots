@@ -54,10 +54,10 @@ in {
     ./features/power-toggle.nix
     ./features/niri-noctalia.nix
     ./features/llama-cpp.nix
-    # ai-textinfer: default-enabled (unlike llama-cpp above) - a core CLI
+    # ai-paratext: default-enabled (unlike llama-cpp above) - a core CLI
     # tool, not a machine-specific opt-in, so it's universal rather than
     # per-context.
-    ./features/ai-textinfer.nix
+    ./features/ai-paratext.nix
     ./features/butterfish.nix
     ./features/sd-switch.nix
     ./features/wsl-shell-integration.nix

@@ -54,7 +54,7 @@ let
   
   # Create local tuned packages list
   # Falls back to pkgs.external.<name> for from-source packages that live
-  # under that namespace (e.g. lazytask, textinfer) rather than as a
+  # under that namespace (e.g. lazytask, paratext) rather than as a
   # plain top-level nixpkgs attribute.
   localTunedPackages = lib.mapAttrsToList (name: opt:
     let
