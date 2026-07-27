@@ -35,6 +35,21 @@ in
   home.file.".bashrc-nix".source = bashrcDerivation;
   home.file.".profile-nix".source = profileDerivation;
 
+  dots.tools = [
+    {
+      name = "nixon";
+      synopsis = "Bash function: re-enter a fresh env with Nix loaded on top (see `nixon --help`).";
+      feature = "modules/core/nixon.nix (always installed)";
+      dotsLocalSettings = [ "nixonDefault" ];
+    }
+    {
+      name = "nixoff";
+      synopsis = "Bash function: re-enter a fresh env with the pure host shell, Nix removed (see `nixoff --help`).";
+      feature = "modules/core/nixon.nix (always installed)";
+      dotsLocalSettings = [ "nixonDefault" ];
+    }
+  ];
+
   # `programs.bash.enable = true` (set in flake.nix) makes Home Manager's
   # own built-in bash module declare `home.file.".bashrc"`/`".profile"`
   # itself, independent of anything in this file. Explicitly disabling

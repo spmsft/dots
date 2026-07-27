@@ -42,6 +42,7 @@ in {
     ./core/nix-tools.nix
     ./core/scripts.nix
     ./core/alien-packages.nix
+    ./core/tools-registry.nix
     ./core/tune-support.nix
     ./core/platform.nix
     ./contexts/common.nix

@@ -313,19 +313,19 @@ Shared AppImages are updated in the dots repo, then `apply-dots` re-imports them
 
 ```bash
 # Update registered host-local AppImages (default)
-appimage-update
+update-appimages
 
 # Update specific app
-appimage-update steam
+update-appimages steam
 
 # Update all AppImages in localDir (including unregistered)
-appimage-update --unregistered
+update-appimages --unregistered
 
 # Update everything: host-local + unregistered + shared
-appimage-update --all
+update-appimages --all
 
 # Update shared AppImages in dots repo
-appimage-update --include-shared
+update-appimages --include-shared
 ```
 
 Exec bit is preserved during updates: if an AppImage was executable before update, it will be chmod +x after.

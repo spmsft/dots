@@ -58,7 +58,7 @@ print_error() {
   fi
 }
 
-# log_* helpers - a second, simpler style used by appimage-update/the new
+# log_* helpers - a second, simpler style used by update-appimages/the new
 # setup-* scripts (kept as a distinct, shorter convention rather than
 # forcing print_header/print_section everywhere - not every script needs a
 # bordered header)

@@ -362,6 +362,103 @@
       '
     '')
 
+    (pkgs.writeShellScriptBin "dots-tools" ''
+      #!/usr/bin/env bash
+      # dots-tools - List every non-standard tool (hand-rolled script/
+      # function installed by a feature or suite - NOT a plain packaged
+      # binary already coming from a nix package or its alien equivalent)
+      # that is currently active on this machine, with a one-line
+      # synopsis, the feature/suite that installs it, and any dotsLocal
+      # settings that affect it. Companion to dots-local-options/
+      # dots-context-options for the same "dots is too big to keep in my
+      # head" problem, but at the "what commands do I even have"
+      # granularity instead of the option-tree granularity.
+      # Usage: dots-tools [-i|--interactive] [search-term]
+      #
+      # Reads straight from the dots.tools registry (see
+      # modules/core/tools-registry.nix and .#dotsToolsDoc flake output) -
+      # every feature/suite that installs a hand-rolled command appends
+      # its own entry there, right next to where it installs the command
+      # itself, so this list can't drift from what's actually active.
+      #
+      # Unlike dots-local-options/dots-context-options's -i mode (which
+      # renders full details on selection), selecting a tool here just
+      # prints its bare name to stdout - so `dots-tools -i` composes
+      # naturally with command substitution/shell widgets, e.g.
+      # `$(dots-tools -i) --help` or bound to a key via
+      # `bind -x '"\C-g\C-t": READLINE_LINE="$(dots-tools -i)"'`
+      # in your own bashrc, mirroring fzf's own key-binding convention.
+      #
+      # Examples:
+      #   dots-tools                 # list everything
+      #   dots-tools vk              # only tools matching "vk"
+      #   dots-tools -i              # fuzzy-pick, prints the chosen name
+      #   dots-tools -i llama        # interactive, pre-narrowed
+
+      set -e
+
+      DOTS_DIR="''${DOTS_DIR:-$HOME/dots}"
+      DOTS_LOCAL_DIR="''${DOTS_LOCAL_DIR:-$HOME/dots-local}"
+
+      source ${./scripts/common.sh}
+
+      INTERACTIVE=0
+      FILTER=""
+      for arg in "$@"; do
+        case "$arg" in
+          -i|--interactive) INTERACTIVE=1 ;;
+          *) FILTER="$arg" ;;
+        esac
+      done
+
+      DOC_JSON=$(nix eval --json "$DOTS_DIR#dotsToolsDoc" \
+        --override-input dots-local "git+file://$DOTS_LOCAL_DIR" 2>/dev/null) \
+        || { print_error "Failed to evaluate .#dotsToolsDoc"; exit 1; }
+
+      if [ "$INTERACTIVE" -eq 1 ]; then
+        if [ "$USE_GUM" -ne 1 ]; then
+          print_error "Interactive mode (-i/--interactive) needs gum, which isn't on PATH."
+          exit 1
+        fi
+
+        # One tab-separated "name<TAB>synopsis<TAB>feature" line per tool,
+        # fed to gum filter for fuzzy narrowing.
+        LINES=$(echo "$DOC_JSON" | jq -r --arg filter "$FILTER" '
+          .[] | select($filter == "" or (.name | contains($filter)) or (.synopsis | ascii_downcase | contains($filter | ascii_downcase))) |
+          "\(.name)\t\(.synopsis)\t\(.feature)"
+        ')
+
+        if [ -z "$LINES" ]; then
+          print_error "No tools match filter: $FILTER"
+          exit 1
+        fi
+
+        # Just the name on selection (no details block) - meant to be
+        # captured via $(...) or a bash keybinding, not read by a human
+        # mid-pick.
+        echo "$LINES" | gum filter \
+          --placeholder "Search dots tools... (esc to quit)" \
+          --height 20 --indicator "→" \
+          --header "↑↓/type to narrow · enter to pick name · esc to quit" \
+          | cut -f1
+        exit 0
+      fi
+
+      print_header "🛠️" "dots tools"
+      if [ -n "$FILTER" ]; then
+        echo -e "   ''${YELLOW}Filter:''${NC} ''${GREEN}$FILTER''${NC}"
+      fi
+      echo ""
+
+      echo "$DOC_JSON" | jq -r --arg filter "$FILTER" '
+        .[] | select($filter == "" or (.name | contains($filter)) or (.synopsis | ascii_downcase | contains($filter | ascii_downcase))) |
+        "\u001b[1;36m\(.name)\u001b[0m\n" +
+        "  \u001b[1;33mfeature:\u001b[0m \(.feature)\n" +
+        (if (.dotsLocalSettings | length) > 0 then "  \u001b[1;35mdotsLocal:\u001b[0m \(.dotsLocalSettings | join(", "))\n" else "" end) +
+        "  \(.synopsis)\n"
+      '
+    '')
+
     (pkgs.writeShellScriptBin "update-dots" ''
       #!/usr/bin/env bash
       # update-dots - Update dots flake inputs
@@ -431,10 +528,10 @@
       echo ""
     '')
 
-    (pkgs.writeShellScriptBin "appimage-update" ''
+    (pkgs.writeShellScriptBin "update-appimages" ''
       #!/usr/bin/env bash
-      # appimage-update - Update AppImages
-      # Usage: appimage-update [app-name] [--all] [--unregistered] [--include-shared]
+      # update-appimages - Update AppImages
+      # Usage: update-appimages [app-name] [--all] [--unregistered] [--include-shared]
 
       DOTS_LOCAL_DIR="''${DOTS_LOCAL_DIR:-$HOME/dots-local}"
       DOTS_DIR="''${DOTS_DIR:-$HOME/dots}"
@@ -470,7 +567,7 @@
                   INCLUDE_SHARED=true
                   ;;
               --help|-h)
-                  echo "Usage: appimage-update [options] [app-name]"
+                  echo "Usage: update-appimages [options] [app-name]"
                   echo ""
                   echo "Update AppImages using appimageupdatetool."
                   echo ""
@@ -487,10 +584,10 @@
                   echo "has a different version in the filename."
                   echo ""
                   echo "Examples:"
-                  echo "  appimage-update              # Update registered host-local apps"
-                  echo "  appimage-update steam        # Update specific app"
-                  echo "  appimage-update --unregistered # Update all AppImages in \$LOCAL_DIR"
-                  echo "  appimage-update --all        # Update everything"
+                  echo "  update-appimages              # Update registered host-local apps"
+                  echo "  update-appimages steam        # Update specific app"
+                  echo "  update-appimages --unregistered # Update all AppImages in \$LOCAL_DIR"
+                  echo "  update-appimages --all        # Update everything"
                   exit 0
                   ;;
               -*)
@@ -733,4 +830,46 @@
   # e.g. modules/features/viewer/v.sh, and this leftover PATH entry was
   # never cleaned up alongside it).
   home.sessionPath = [ "$HOME/.local/bin" ];
+
+  # This file's own scripts, registered in the dots.tools registry (see
+  # modules/core/tools-registry.nix) - these are always installed
+  # (no cfg.enable gate in this module), so they're registered
+  # unconditionally too.
+  dots.tools = [
+    {
+      name = "apply-dots";
+      synopsis = "Build+activate this Home Manager config (baseline or -opt build).";
+      feature = "modules/core/scripts.nix (always installed)";
+    }
+    {
+      name = "dots-sync";
+      synopsis = "Wrapper for sync.sh - syncs handcrafted per-host configs.";
+      feature = "modules/core/scripts.nix (always installed)";
+    }
+    {
+      name = "dots-local-options";
+      synopsis = "Show every option settable in dots-local/flake.nix.";
+      feature = "modules/core/scripts.nix (always installed)";
+    }
+    {
+      name = "dots-context-options";
+      synopsis = "Show every features.*/suites.* toggle plus this machine's current value.";
+      feature = "modules/core/scripts.nix (always installed)";
+    }
+    {
+      name = "dots-tools";
+      synopsis = "List/search non-standard tools installed by active features/suites (this command).";
+      feature = "modules/core/scripts.nix (always installed)";
+    }
+    {
+      name = "update-dots";
+      synopsis = "Pull/update dots + dots-local + flake inputs.";
+      feature = "modules/core/scripts.nix (always installed)";
+    }
+    {
+      name = "update-appimages";
+      synopsis = "Update per-context/shared AppImages tracked in contexts/<context>/appimages/manifest.nix.";
+      feature = "modules/core/scripts.nix (always installed)";
+    }
+  ];
 }

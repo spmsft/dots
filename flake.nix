@@ -268,6 +268,16 @@
             description = lib.trim (if (o.description or null) == null then "" else o.description);
           }) (builtins.filter isFeatureOrSuite rawDocs);
 
+      # Registry of non-standard (hand-rolled, not a nix-package/alien
+      # binary) tools currently installed on this machine - each
+      # feature/suite appends its own entries to `dots.tools` right next
+      # to where it installs the tool itself (see
+      # modules/core/tools-registry.nix), so this can't drift from
+      # what's actually active. See the `dots-tools` command
+      # (modules/core/scripts.nix) for a human-readable CLI view.
+      dotsToolsDoc =
+        lib.sort (a: b: a.name < b.name) defaultHomeConfig.config.dots.tools;
+
     in {
       # There's no "context choice" to make on the command line - it's
       # fully determined by whatever dots-local.flake.nix's `context` (and
@@ -295,5 +305,11 @@
       # formatted CLI view, or query directly:
       #   nix eval --json .#dotsContextOptionsDoc --override-input dots-local git+file://$HOME/dots-local
       dotsContextOptionsDoc = dotsContextOptionsDoc;
+
+      # Registry of non-standard tools active on this machine
+      # (name/synopsis/feature/dotsLocalSettings) - see `dots-tools`
+      # command for a formatted CLI view, or query directly:
+      #   nix eval --json .#dotsToolsDoc --override-input dots-local git+file://$HOME/dots-local
+      dotsToolsDoc = dotsToolsDoc;
     };
 }

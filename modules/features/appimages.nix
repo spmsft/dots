@@ -224,6 +224,20 @@ in
         appimage-run
         appimageupdate
       ] ++ wrappedPackages;
+
+      # Each cataloged/host-local AppImage is itself a "non-standard"
+      # tool by this registry's own definition (a downloaded/wrapped
+      # binary, not a nix package or its alien equivalent) - registered
+      # generically here rather than one entry per app, so new catalog
+      # entries (contexts/*/appimages/manifest.nix, dots-local's own
+      # appimages.*) show up automatically with no further edits needed.
+      dots.tools = lib.mapAttrsToList
+        (name: app: {
+          name = app.command or name;
+          synopsis = "AppImage: ${app.desktopName or name}.";
+          feature = "features.appimages.apps.${name}";
+        })
+        enabledApps;
     })
   ];
 }

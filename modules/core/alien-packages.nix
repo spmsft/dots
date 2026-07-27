@@ -570,7 +570,15 @@ HELP
   in {
     # Install the install script
     home.packages = [ installScript ];
-    
+
+    dots.tools = [
+      {
+        name = "update-alien-packages";
+        synopsis = "Install/update/prune native (alien) packages for this distro's package manager(s).";
+        feature = "modules/core/alien-packages.nix (always installed)";
+      }
+    ];
+
     # Copy package lists to ~/.local/share/dots/packages/required/
     home.file = (lib.mapAttrs' (mgr: packages: {
       name = ".local/share/dots/packages/required/${mgr}.txt";

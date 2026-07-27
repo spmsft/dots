@@ -177,6 +177,15 @@ in {
   config = lib.mkIf cfg.enable {
     home.packages = [ setupCommand pkgs.python313Packages.huggingface-hub ];
 
+    dots.tools = [
+      {
+        name = "setup-llama-cpp";
+        synopsis = "install|remove|update the source-built llama.cpp checkout (CUDA-aware if enabled).";
+        feature = "features.llama-cpp";
+        dotsLocalSettings = [ "gpu" "machine.cudaComputeCap" ];
+      }
+    ];
+
     home.sessionPath = [ 
       "${config.home.homeDirectory}/.local/bin"
       "$HOME/.local/share/llama-cpp-chromaden/bin"

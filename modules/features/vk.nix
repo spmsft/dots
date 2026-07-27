@@ -88,5 +88,13 @@ in
     ]
     ++ lib.optionals (backend == "wayland") [ pkgs.wl-clipboard ]
     ++ lib.optionals (backend == "x11") [ pkgs.xclip ];
+
+    dots.tools = [
+      {
+        name = "vk";
+        synopsis = "Vault-of-Knowledge note tool - import/convert content into a local knowledge base.";
+        feature = "features.vk";
+      }
+    ];
   };
 }

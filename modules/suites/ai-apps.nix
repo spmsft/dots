@@ -244,6 +244,25 @@ in
         pi-launcher
       ]);
 
+    dots.tools =
+      (lib.optional cfg.opencode {
+        name = "setup-graphify";
+        synopsis = "install|remove|update the graphify knowledge-graph tool (git+venv, not a nix package).";
+        feature = "suites.ai-apps";
+      })
+      ++ (lib.optionals cfg.pi [
+        {
+          name = "pi";
+          synopsis = "Launch the pi-coding-agent CLI (installed into an isolated npm prefix, not a nix package).";
+          feature = "suites.ai-apps";
+        }
+        {
+          name = "setup-pi";
+          synopsis = "install|remove|update pi-coding-agent into its isolated npm prefix.";
+          feature = "suites.ai-apps";
+        }
+      ]);
+
     # Make build/clean scripts immediately usable
     home.sessionPath = [
       "${config.home.homeDirectory}/.local/bin"

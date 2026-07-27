@@ -104,6 +104,14 @@ in
     home.packages = [ rescueLuaWrapper ]
       ++ lib.optionals cfg.emergencyUtils [ rescueBusybox rescueJq ];
 
+    dots.tools = [
+      {
+        name = "rescue-lua";
+        synopsis = "Statically-linked Lua interpreter that keeps working even if the host's dynamic linker/glibc is broken.";
+        feature = "features.rescue-lua";
+      }
+    ];
+
     programs.bash.shellAliases = {
       rlua = "rescue-lua";
       rluajit = "rescue-lua --jit";

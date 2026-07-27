@@ -439,6 +439,29 @@ in {
       '' + builtins.readFile ./niri-noctalia/wait-for-x11.sh))
     ];
 
+    dots.tools = [
+      {
+        name = "terminal-in-current-column";
+        synopsis = "Open/focus a terminal in niri's currently focused column.";
+        feature = "features.niri-noctalia";
+      }
+      {
+        name = "terminal-scratchpad-toggle";
+        synopsis = "Toggle a dedicated dropdown/scratchpad terminal (zellij session) in niri.";
+        feature = "features.niri-noctalia";
+      }
+      {
+        name = "start-xwayland-satellite";
+        synopsis = "Start xwayland-satellite for running X11 apps under niri.";
+        feature = "features.niri-noctalia";
+      }
+      {
+        name = "wait-for-x11";
+        synopsis = "Block until an X11 server (xwayland-satellite) is ready.";
+        feature = "features.niri-noctalia";
+      }
+    ];
+
     # GTK/Qt theming - commented out, not niri/noctalia specific
     # gtk = {
     #   enable = true;

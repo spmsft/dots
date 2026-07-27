@@ -33,8 +33,8 @@ update-alien-packages                    # Install missing native packages
 update-alien-packages --action remove    # Clean up orphaned packages
 
 # Manage AppImages
-appimage-update                          # Update registered AppImages
-appimage-update --all                    # Update all AppImages
+update-appimages                          # Update registered AppImages
+update-appimages --all                    # Update all AppImages
 ```
 
 Which context (priv/work) and machine-specific behavior (GPU, compositor,

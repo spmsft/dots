@@ -27,5 +27,14 @@ in {
         fi
       '';
     };
+
+    dots.tools = [
+      {
+        name = "power-toggle.sh";
+        synopsis = "Toggle CPU boost + display resolution/refresh/brightness between eco and performance modes.";
+        feature = "features.power-toggle";
+        dotsLocalSettings = [ "machine.display" ];
+      }
+    ];
   };
 }

@@ -4157,3 +4157,26 @@ invocations" design (that's the separate, previously-flagged, explicitly
 out-of-scope "persistent daemon" option (c) from the initial exploration
 - would reverse this project's in-process, no-server design decision and
 needs explicit sign-off if ever revisited).
+
+## 2026-07-27: `appimage-update` renamed to `update-appimages`; `pi` disabled on `lub`
+
+**Supersedes** the earlier "`appimage-update` naming stays as-is
+(well-established)" call recorded in this file and in
+`project-brief.md`/`architecture.md` - the user explicitly asked for the
+rename this time, so it now follows the same `update-<noun>`/`setup-<x>`
+verb-first convention as `update-dots`/`update-alien-packages` instead of
+being the one `<noun>-<verb>`-shaped holdout. Renamed the
+`pkgs.writeShellScriptBin` name, its own internal usage text, its
+`dots.tools` registry entry (`modules/core/scripts.nix`), and all doc
+references (`README.md`, `OVERVIEW.md`, `modules/core/scripts/common.sh`
+comment) in one pass. Did not touch the historical entries in
+`decisions.md`/`project-brief.md`/`architecture.md` that recorded the old
+"stays as-is" call - those remain as an accurate record of what was
+decided *then*; this new entry is the record of what changed and why.
+
+Also disabled `suites.ai-apps.pi` on this machine (`lub`,
+`dots-local/host.nix`) by simply removing the `pi = true;` opt-in line -
+`pi` was already off-by-default globally
+(`coreLib.mkDefaultDisabledOption` in `modules/suites/ai-apps.nix`), so no
+`dots` repo change was needed for the "disable by default" half of the
+request; only the machine-local opt-in needed removing.

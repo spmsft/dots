@@ -107,7 +107,16 @@ in
       viewerScript
       (lib.mkIf cfg.ripgrepAll pkgs.ripgrep-all)
     ];
-    
+
+    dots.tools = [
+      {
+        name = cfg.alias;
+        synopsis = "Smart file viewer - picks image/pdf/video/text rendering by file type.";
+        feature = "features.viewer";
+        dotsLocalSettings = [ ];
+      }
+    ];
+
     # Create the alias
     programs.bash.shellAliases = {
       ${cfg.alias} = "${viewerScript}/bin/v";
