@@ -3,6 +3,47 @@
 let
   cfg = config.suites.tui-apps;
   coreLib = import ../core/lib.nix { inherit lib; };
+
+  # Root cause of the "byobu launches into a stale/wrongly-themed
+  # session, and exiting cycles through several more before it finally
+  # quits" symptom (confirmed by reading byobu's own launcher source,
+  # `$BYOBU_PREFIX/bin/.byobu`): byobu's plain `byobu` (no args) first
+  # runs `tmux list-sessions`, and if ANY session already exists on the
+  # (plain, default-socket) tmux server, it execs `byobu-select-session`
+  # to attach one of them INSTEAD OF creating a new session - it never
+  # creates fresh once at least one session is already running. Because
+  # tmux only *applies* `set -g <style>` options (like this file's
+  # `.tmux.conf` theme) at the moment a session is created/sources its
+  # config - never retroactively to sessions already running on a still-
+  # alive server - every session created by an earlier `byobu` launch
+  # (e.g. from before this theme existed, or from a mid-iteration
+  # version of it) keeps rendering with whatever config was live AT THE
+  # TIME it was first created, forever, until that specific session is
+  # killed. Repeated manual `byobu` launches across iterating on this
+  # theme silently accumulate exactly these stale sessions on the
+  # server, and `byobu-select-session` cycles through them one-by-one on
+  # exit - which looks like "nested"/inconsistently-themed byobu
+  # instances, but is really just several old, never-cleaned-up sessions
+  # with different vintages of this same config baked in.
+  #
+  # Fix: a small opt-in helper (never run automatically/silently - that
+  # would risk killing unrelated real work in other byobu sessions) that
+  # kills the whole backing tmux server, so the next plain `byobu`
+  # launch is guaranteed to create one fresh session using whatever the
+  # CURRENT `.tmux.conf`/backend look like. Registered in the `dots-tools`
+  # registry (see modules/core/tools-registry.nix) so it's discoverable.
+  byobuReset = pkgs.writeShellScriptBin "byobu-reset" ''
+    set -euo pipefail
+    echo "This will terminate ALL byobu/tmux sessions (backing tmux server) so the next 'byobu' launch starts fresh with the current theme/config." >&2
+    read -r -p "Continue? [y/N] " reply
+    case "$reply" in
+      y|Y|yes|YES) ;;
+      *) echo "Aborted." >&2; exit 1 ;;
+    esac
+    ${pkgs.tmux}/bin/tmux kill-server 2>/dev/null || true
+    echo "Done - all byobu sessions cleared." >&2
+  '';
+
   appSet = coreLib.mkAppSet {
     inherit alien;
     apps = {
@@ -54,7 +95,13 @@ in
 
   config = lib.mkMerge [
     (lib.mkIf cfg.enable {
-    home.packages = appSet.packages;
+    home.packages = appSet.packages ++ lib.optional cfg.byobu byobuReset;
+
+    dots.tools = lib.optional cfg.byobu {
+      name = "byobu-reset";
+      synopsis = "Kill the byobu-backed tmux server (prompts first) so the next 'byobu' launch starts one fresh session with the current theme/config, instead of attaching to an old stale one.";
+      feature = "suites.tui-apps.byobu";
+    };
 
     programs.btop = lib.mkIf cfg.btop {
       settings = {

@@ -4394,3 +4394,50 @@ it.
 --no-write-lock-file` - confirmed `byobu-6.15` fetched straight from
 `cache.nixos.org` (not built via alien/paru path) after the cachyos spec
 removal; re-ran clean after the debian spec removal too.
+
+### 2026-08-01 — Real root cause of "byobu nests/cycles through wrongly-themed sessions" found: stale tmux sessions, not a config bug
+
+After the WSL `getcwd()` fix, user reported byobu still "loops": launch ->
+green theme -> exit -> auto-reenters green theme -> exit -> auto-reenters
+solarpunk theme -> exit -> finally exits for real. Traced through byobu's
+actual installed source (`$BYOBU_PREFIX/bin/.byobu`, via the nixpkgs
+`byobu` derivation, not guesswork) rather than speculating:
+
+```
+sessions=$($BYOBU_BACKEND list-sessions 2>/dev/null) || true
+...
+case "$sessions" in
+  *\(*\)*) exec byobu-select-session ;;   # attach to an EXISTING session
+  *) exec tmux ... $DEFAULT_WINDOW ;;      # only creates fresh if NONE exist
+esac
+```
+
+Plain `byobu` (no args) only ever creates a new session if the (plain,
+default-socket) tmux server has zero sessions - otherwise it always
+attaches to an existing one via `byobu-select-session`, cycling through
+them if more than one exists and the current one ends. Combined with the
+fact that tmux only *applies* `set -g <style>` options at the moment a
+session is created (never retroactively to a session already running on
+a still-alive server), every earlier `byobu` launch across this whole
+debugging saga (before the theme existed, mid-iteration, and finally
+after the solarpunk theme landed) left its own session sitting on the
+server, each permanently rendering whatever config was live when IT was
+created. Nothing was ever killing that tmux server between iterations
+(never touched by me - out of scope per the "never touch real $HOME"
+constraint), so 3 stale sessions had silently accumulated by the time of
+the report, and `byobu-select-session` cycled through all 3 in creation
+order (oldest/green -> oldest/green -> newest/solarpunk) on repeated
+exits - not a "nested shells"/config bug at all.
+
+**Fix:** since silently killing the tmux server on every `apply-dots`
+activation would risk destroying unrelated real work in other sessions,
+added an explicit, opt-in `byobu-reset` command instead (prompts for
+confirmation, then `tmux kill-server`) - registered in the `dots-tools`
+registry (`suites.tui-apps.byobu`). One-time fix for the user: run
+`byobu-reset` once to clear the 3 accumulated stale sessions; from then
+on, a clean `apply-dots` + `byobu-reset` after any future theme/config
+tweak guarantees the very next `byobu` launch picks up the change.
+
+**Validated:** `nix build` clean; `nix eval
+.#homeConfigurations.default.config.dots.tools` confirms the new
+`byobu-reset` entry renders with the expected synopsis/feature fields.
