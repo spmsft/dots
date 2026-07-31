@@ -77,23 +77,20 @@ in
       text = "tmux\n";
     };
 
-    home.file.".byobu/statusrc" = lib.mkIf cfg.byobu {
-      force = true;
-      text = ''
-        # Minimal status bar - trim the noisier default segments.
-        color
-        disk_io
-        entropy
-        network
-        raid
-        rcs_cold_plug
-        reboot_required
-        release
-        updates_available
-        users
-        wifi_quality
-      '';
-    };
+    # NOTE: deliberately no `~/.byobu/statusrc` here (there was one, briefly
+    # - removed after it broke shell startup, see memory-bank/decisions.md's
+    # dated entry). `statusrc` is a bash-*sourced* file for overriding
+    # variables like `MONITORED_DISK`/`NETWORK_UNITS` (see byobu's own
+    # /usr/share/byobu/status/statusrc template) - it is NOT a plain list of
+    # segment names to enable, which is what the removed file wrongly
+    # contained (bare words like `disk_io` got executed as commands: "line
+    # 3: disk_io: command not found"). Segment enable/disable is actually
+    # `~/.byobu/status`'s `tmux_left`/`tmux_right` variables (`#`-prefix to
+    # disable a segment) - but that mechanism is moot here anyway, since
+    # the `status-left`/`status-right` set below in `.tmux.conf` already
+    # fully replace byobu's dynamic segment-driven status line with a
+    # minimal static one (session/clock/date only), which was the original
+    # "trim the noisy default segments" goal.
 
     # Tokyo Night x solarpunk-neon crossover theme: Tokyo Night's dark
     # base palette (#1a1b26 bg / #c0caf5 fg) with neon-green/cyan

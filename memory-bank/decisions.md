@@ -4283,3 +4283,46 @@ byobu's packaged config, sourced before this user hook file) are
 structurally unaffected. Added an explicit comment in the file itself
 documenting this guarantee and instructing future edits to stay
 style-only.
+
+## 2026-07-31: Fix - removed broken `~/.byobu/statusrc`, was breaking shell startup
+
+User reported byobu erroring on start (`shell-init: error retrieving
+current directory: getcwd: cannot access parent directories`, requiring
+Ctrl-D twice to exit) and, after ruling out a stale tmux server
+(`tmux kill-server` didn't fix it), the real error surfaced:
+`/home/sp/.byobu/statusrc: line 3: disk_io: command not found`.
+
+**Root cause:** the `~/.byobu/statusrc` file added when byobu replaced
+zellij (same-day entry above) used the wrong format/mechanism entirely.
+Confirmed via byobu's own installed template
+(`/usr/share/byobu/status/statusrc`, `/usr/share/byobu/status/status`):
+- `statusrc` is a bash-*sourced* file for overriding variables like
+  `MONITORED_DISK`/`NETWORK_UNITS`/`BYOBU_DISTRO` etc - NOT a list of
+  segment names. Our file wrongly contained bare segment-name words
+  (`color`, `disk_io`, `network`, ...) one per line, which bash tried to
+  execute as commands when sourcing the file, causing the "command not
+  found" errors (and very likely the shell-init/cwd/double-exit symptoms
+  too, given they only appeared once byobu started sourcing this file).
+- Segment enable/disable is actually controlled by `~/.byobu/status`'s
+  `tmux_left`/`tmux_right` variables (`#`-prefix a name to disable it) -
+  a completely different file/format than what we wrote.
+
+**Fix:** deleted the `~/.byobu/statusrc` home.file entirely rather than
+reformatting it into the correct `~/.byobu/status` mechanism, since it
+was already functionally moot - `.tmux.conf`'s `status-left`/
+`status-right` (set as part of the Tokyo Night x solarpunk-neon theme)
+already fully replace byobu's dynamic segment-driven status line with a
+minimal static one (session/clock/date only), which was the original
+"trim the noisy default segments" goal from when byobu was first
+introduced. Left a detailed comment in `tui-apps.nix` explaining both the
+wrong-format bug and why no replacement file is needed.
+
+**Validated:** `nix build .#homeConfigurations.default.activationPackage`
+rebuilds cleanly with the `statusrc` derivation no longer generated (home
+-manager will remove the stale file from a previous activation on next
+`apply-dots`, standard home-manager behavior for files no longer
+declared). Did not reproduce live in the user's actual session per their
+explicit request not to touch their real $HOME/tmux/byobu state for
+testing - relied on inspecting byobu's own installed template files
+(read-only, via the package manager's file listing) plus the Nix build
+result instead.
