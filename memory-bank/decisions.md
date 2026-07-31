@@ -4326,3 +4326,35 @@ explicit request not to touch their real $HOME/tmux/byobu state for
 testing - relied on inspecting byobu's own installed template files
 (read-only, via the package manager's file listing) plus the Nix build
 result instead.
+
+## 2026-07-31: WSL DrvFs getcwd() guard for `byobu`
+
+Root cause finally pinned down for the reported "byobu shows several
+nested/differently-themed layers, needs multiple Ctrl-D's" symptom: this
+machine (`lub`) is itself WSL2 (`dots-local/flake.nix`'s `isWsl = true`;
+confirmed via `uname -a` -> `-microsoft-standard-WSL2`), and the user was
+sitting in a directory under the Windows-mounted drive
+(`/mnt/c/Users/splantikow/...`) when invoking `byobu`. This is a known
+WSL DrvFs limitation - `getcwd()` can intermittently fail for processes
+whose cwd is on `/mnt/c/...`, which is exactly bash's own
+"shell-init: error retrieving current directory: getcwd: cannot access
+parent directories" warning. `tmux ls` confirmed there was only ever a
+single real session/server (not 3 stacked ones) - the "layers" were
+nested shell-init retry attempts from the SAME broken-cwd condition, not
+a config/theme bug. Ruled out repo-side auto-launch-in-bashrc as a cause
+too (grepped - nothing in dots invokes byobu automatically from shell
+startup, only the niri scratchpad script, keybinding-gated).
+
+**Fix:** `modules/suites/tui-apps.nix` now takes `dotsLocal` as a module
+arg and, gated on `dotsLocal.isWsl` (not just `cfg.byobu`), wraps `byobu`
+in a bash function that checks `builtin pwd` first - if the shell's own
+cwd is currently unreadable, `cd "$HOME"` (native WSL Linux filesystem,
+never `/mnt/c`) before `command byobu "$@"`. Non-WSL hosts are entirely
+unaffected (`lib.optionalString dotsLocal.isWsl` - empty string
+otherwise).
+
+**Validated:** `nix build .#homeConfigurations.default.activationPackage`
+rebuilt cleanly; confirmed (via `nix path-info
+.#homeConfigurations.default.config.home.file.".bashrc".source`) the
+guard function renders correctly into the real built `~/.bashrc` on this
+WSL host, and `bash -n` on that built file confirms valid syntax.

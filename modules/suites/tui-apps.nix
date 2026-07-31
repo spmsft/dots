@@ -1,4 +1,4 @@
-{ config, lib, pkgs, inputs, alien, ... }:
+{ config, lib, pkgs, inputs, alien, dotsLocal, ... }:
 
 let
   cfg = config.suites.tui-apps;
@@ -141,12 +141,27 @@ in
       '';
     };
 
-    programs.bash.initExtra = lib.mkIf cfg.byobu ''
+    programs.bash.initExtra = lib.mkIf cfg.byobu (''
       if [ -n "''${BYOBU_BACKEND:-}$TMUX" ] && [ -z "$BYOBU_HELP_SHOWN" ]; then
         export BYOBU_HELP_SHOWN=1
         echo -e '\033[1m\033[35m F2 new / F3-F4 switch / F6 detach\033[0m'
       fi
-    '';
+    '' + lib.optionalString dotsLocal.isWsl ''
+
+      # WSL's DrvFs (Windows-mounted /mnt/c/... paths) can intermittently
+      # make getcwd() fail (bash's "shell-init: error retrieving current
+      # directory" warning - seen when launching byobu/tmux from such a
+      # directory, requiring several Ctrl-D's to unwind the resulting
+      # broken nested shells). Guard the `byobu` invocation itself: if the
+      # shell's own cwd is currently unreadable, fall back to $HOME (the
+      # native WSL Linux filesystem, not /mnt/c) before entering byobu.
+      byobu() {
+        if ! builtin pwd >/dev/null 2>&1; then
+          cd "$HOME" 2>/dev/null || cd /
+        fi
+        command byobu "$@"
+      }
+    '');
 
     # NOTE: no `programs.lazygit.enable = true;` here (deliberately) -
     # `lazygit` has no `settings`/shell-integration set anywhere in this
