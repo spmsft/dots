@@ -8,7 +8,7 @@ let
     apps = {
       # Core TUI apps
       btop = { enable = cfg.btop; pkg = pkgs.btop; };
-      zellij = { enable = cfg.zellij; pkg = pkgs.zellij; };
+      byobu = { enable = cfg.byobu; pkg = pkgs.byobu; };
       lazygit = { enable = cfg.lazygit; pkg = pkgs.lazygit; };
       yazi = { enable = cfg.yazi; pkg = pkgs.yazi; };
       pass = { enable = cfg.pass; pkg = pkgs.pass; };
@@ -31,7 +31,7 @@ in
     enable = coreLib.mkDefaultEnabledOption "Enable interactive TUI tools";
 
     btop = coreLib.mkDefaultEnabledOption "btop - system monitor";
-    zellij = coreLib.mkDefaultEnabledOption "Zellij terminal multiplexer";
+    byobu = coreLib.mkDefaultEnabledOption "Byobu terminal multiplexer";
     lazygit = coreLib.mkDefaultEnabledOption "Lazygit";
     yazi = coreLib.mkDefaultEnabledOption "Yazi file manager";
     pass = coreLib.mkDefaultDisabledOption "pass (password manager)";
@@ -64,148 +64,41 @@ in
       };      
     };
 
-    # NOTE: no `programs.zellij.enable = true;` here (deliberately) - it
-    # would only re-add `pkgs.zellij` to home.packages a second time
-    # (already provided above via `appSet`/`alien.mkEntry`, alien-aware),
-    # since `cfg.settings`/`cfg.extraConfig` are never touched (the KDL
-    # config below is written directly via `home.file`, not through the
-    # module), and no shell integration is enabled - `programs.zellij`
-    # would genuinely do nothing else for us here. Confirmed via reading
-    # home-manager's own zellij.nix module source.
-    home.file.".config/zellij/config.kdl" = lib.mkIf cfg.zellij {
+    # NOTE: no home-manager `programs.byobu` module exists (unlike
+    # zellij/tmux) - byobu config is plain files under ~/.byobu/, written
+    # directly via `home.file` below, same rationale as the old zellij
+    # setup (`pkgs.byobu` already provided above via `appSet`/
+    # `alien.mkEntry`, alien-aware).
+    home.file.".byobu/backend" = lib.mkIf cfg.byobu {
+      force = true;
+      # Pin the tmux backend explicitly (byobu can also drive GNU screen)
+      # so behavior/keybindings are consistent across machines regardless
+      # of which backend happens to be installed/first-found.
+      text = "tmux\n";
+    };
+
+    home.file.".byobu/statusrc" = lib.mkIf cfg.byobu {
       force = true;
       text = ''
-        // Minimal UI settings
-        show_startup_tips false
-        show_release_notes false
-        pane_frames false
-        simplified_ui true
-        
-        // Use compact status bar instead of full button bar
-        // The compact-bar shows just the current mode and help hint
-        default_layout "compact"
-        
-        // Theme - Tokyo Night Storm (blue/purple compatible)
-        theme "tokyo-night-storm"
-        
-        themes {
-          tokyo-night-storm {
-            text_unselected {
-              base 169 177 214
-              background 36 40 59
-              emphasis_0 255 158 100
-              emphasis_1 130 170 255
-              emphasis_2 187 154 247
-              emphasis_3 42 195 222
-            }
-            text_selected {
-              base 192 202 245
-              background 65 72 104
-              emphasis_0 255 158 100
-              emphasis_1 130 170 255
-              emphasis_2 187 154 247
-              emphasis_3 42 195 195
-            }
-            ribbon_unselected {
-              base 122 162 247
-              background 41 46 66
-              emphasis_0 255 158 100
-              emphasis_1 130 170 255
-              emphasis_2 187 154 247
-              emphasis_3 42 195 195
-            }
-            ribbon_selected {
-              base 36 40 59
-              background 122 162 247
-              emphasis_0 255 158 100
-              emphasis_1 192 202 245
-              emphasis_2 187 154 247
-              emphasis_3 42 195 195
-            }
-            frame_unselected {
-              base 86 95 137
-              background 36 40 59
-              emphasis_0 255 158 100
-              emphasis_1 130 170 255
-              emphasis_2 187 154 247
-              emphasis_3 42 195 222
-            }
-            frame_selected {
-              base 122 162 247
-              background 36 40 59
-              emphasis_0 255 158 100
-              emphasis_1 192 202 245
-              emphasis_2 187 154 247
-              emphasis_3 42 195 195
-            }
-            frame_highlight {
-              base 187 154 247
-              background 36 40 59
-              emphasis_0 255 158 100
-              emphasis_1 192 202 245
-              emphasis_2 187 154 247
-              emphasis_3 42 195 195
-            }
-          }
-        }
-        
-        // UI configuration
-        ui {
-          pane_frames {
-            hide_session_name false
-            rounded_corners true
-          }
-        }
-        
-        // Keybindings - Ctrl+o for session mode, then a or h for help
-        keybinds {
-          shared_except "locked" {
-            bind "Ctrl o" { SwitchToMode "Session"; }
-          }
-          session {
-            bind "Ctrl o" { SwitchToMode "Normal"; }
-            bind "a" {
-              // Open about plugin (navigate to Help tab with arrow keys)
-              LaunchOrFocusPlugin "zellij:about" {
-                floating true
-                move_to_focused_tab true
-              }
-              SwitchToMode "Normal"
-            }
-            bind "h" {
-              // Show zellij config in a new pane to the right
-              Run "sh" "-c" "zellij setup --dump-config | bat --style=plain" {
-                direction "Right"
-                close_on_exit true
-              }
-              SwitchToMode "Normal"
-            }
-
-          }
-        }
+        # Minimal status bar - trim the noisier default segments.
+        color
+        disk_io
+        entropy
+        network
+        raid
+        rcs_cold_plug
+        reboot_required
+        release
+        updates_available
+        users
+        wifi_quality
       '';
     };
 
-    home.file.".config/zellij/layouts/compact.kdl" = lib.mkIf cfg.zellij {
-      force = true;
-      text = ''
-        layout {
-          default_tab_template {
-            // Top: compact bar (as plugin intends)
-            pane size=1 borderless=true {
-              plugin location="zellij:compact-bar"
-            }
-            children
-
-          }
-        }
-      '';
-    };
-
-    programs.bash.initExtra = lib.mkIf cfg.zellij ''
-      if [ -n "$ZELLIJ" ] && [ -z "$ZELLIJ_HELP_SHOWN" ]; then
-        export ZELLIJ_HELP_SHOWN=1
-        echo -e '\033[1m\033[35m ctrl-o a / ctrl-o h / ctrl-g\033[0m'
+    programs.bash.initExtra = lib.mkIf cfg.byobu ''
+      if [ -n "''${BYOBU_BACKEND:-}$TMUX" ] && [ -z "$BYOBU_HELP_SHOWN" ]; then
+        export BYOBU_HELP_SHOWN=1
+        echo -e '\033[1m\033[35m F2 new / F3-F4 switch / F6 detach\033[0m'
       fi
     '';
 

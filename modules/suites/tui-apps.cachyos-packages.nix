@@ -6,9 +6,9 @@
     };
   };
 
-  zellij = {
+  byobu = {
     packages = {
-      pacman = [ "zellij" ];
+      pacman = [ "byobu" ];
     };
   };
 

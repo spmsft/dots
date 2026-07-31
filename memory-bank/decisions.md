@@ -4180,3 +4180,47 @@ Also disabled `suites.ai-apps.pi` on this machine (`lub`,
 (`coreLib.mkDefaultDisabledOption` in `modules/suites/ai-apps.nix`), so no
 `dots` repo change was needed for the "disable by default" half of the
 request; only the machine-local opt-in needed removing.
+
+## 2026-07-31: `zellij` -> `byobu` in `suites.tui-apps`; added `noti` to core
+
+Removed `zellij` (package, `cfg.zellij` option, `~/.config/zellij/`
+config.kdl + layouts/compact.kdl, and its bash `initExtra` help hint)
+from `modules/suites/tui-apps.nix`, replacing it with `byobu` end to end:
+new `cfg.byobu` option (`mkDefaultEnabledOption`, same default-on
+behavior as zellij had), `appSet` entry (alien-aware, pulls in the native
+`byobu` package on distros where it's cataloged -
+`tui-apps.cachyos-packages.nix`'s `pacman = [ "byobu" ]`, and newly added
+`tui-apps.debian-packages.nix`'s `apt = [ "byobu" ]` since, unlike
+zellij/yazi, byobu ships in Debian/Ubuntu's official archive - conforms
+to dots's official-repos-only convention), `~/.byobu/backend` pinned to
+`"tmux"` (byobu can also drive GNU screen; pinning keeps behavior
+consistent across machines) and a trimmed `~/.byobu/statusrc`, and a bash
+`initExtra` hint mirroring the old zellij one but checking
+`$BYOBU_BACKEND`/`$TMUX` instead of `$ZELLIJ`.
+
+Also updated `features/niri-noctalia.nix`'s
+`terminal-scratchpad-toggle` script/wiring (per explicit user
+confirmation this should change too, not just the tui-apps suite) -
+swapped its `zellij` binary/session-management calls for byobu's
+tmux-compatible subcommands (`list-sessions -F '#S'` + `grep -qx`,
+`new-session -d -s`, `attach-session -t`), renamed the shell variable
+from `zellij` to `byobu`, and updated the `dots.tools` synopsis text.
+
+**Why byobu over zellij:** user-requested straight swap, no rationale
+beyond preference recorded beyond this. No functional gap found - byobu
+(tmux-backed here) covers the same "detached session + reattach into a
+scratchpad terminal" use case zellij was doing.
+
+**Also added `noti`** (cross-platform CLI notification tool - hooks a
+command's exit into a desktop/OSD notification) to the always-installed
+`modules/core/default.nix` package list, per explicit request. No alien
+wiring needed - like the rest of that file's package list, it's a plain
+`pkgs.noti` entry (no `<feature>.<distro>-packages.nix` exists for
+`core/default.nix`'s baseline list; this is unrelated to the
+suite-scoped alien-package convention used elsewhere).
+
+**Validated:** `nix build .#homeConfigurations.default.activationPackage`
+clean (noti + byobu backend/statusrc derivations built, no zellij
+derivations); `alienPackages.enabledPackages` confirms `byobu` is
+correctly routed to the native `pacman` package on this machine (same
+alien-first behavior zellij had).

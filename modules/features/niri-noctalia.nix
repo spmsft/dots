@@ -415,7 +415,7 @@ in {
         appid="${cfg.terminalAppId}"
         scratch_suffix="${cfg.terminalScratchpadSuffix}"
         scratch_app_id="${cfg.terminalAppId}.${cfg.terminalScratchpadSuffix}"
-        zellij="${pkgs.zellij}/bin/zellij"
+        byobu="${pkgs.byobu}/bin/byobu"
         py="${pkgs.python3}/bin/python3"
         session_name="scratchpad"
 
@@ -447,7 +447,7 @@ in {
       }
       {
         name = "terminal-scratchpad-toggle";
-        synopsis = "Toggle a dedicated dropdown/scratchpad terminal (zellij session) in niri.";
+        synopsis = "Toggle a dedicated dropdown/scratchpad terminal (byobu session) in niri.";
         feature = "features.niri-noctalia";
       }
       {

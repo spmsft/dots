@@ -15,6 +15,7 @@ home.packages = with pkgs; [
     wget                  # File downloader
     time                  # time
     mmv                   # mmv
+    noti                  # Cross-platform CLI notifications (desktop/OSD, hooked off a command's exit)
         
     # --- 2. ENHANCED WORKFLOW (Modern Unix Replacements) ---
     # Tools that upgrade the interactive Bash experience

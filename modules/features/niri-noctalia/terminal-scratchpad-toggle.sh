@@ -1,6 +1,6 @@
-        # Ensure zellij session exists (create detached if not)
-        if ! "$zellij" list-sessions 2>/dev/null | grep -q "^$session_name "; then
-          nohup env TERM="xterm-256color" "$zellij" --session "$session_name" </dev/null >/dev/null 2>&1 &
+        # Ensure byobu (tmux-backed) session exists (create detached if not)
+        if ! "$byobu" list-sessions -F '#S' 2>/dev/null | grep -qx "$session_name"; then
+          nohup env TERM="xterm-256color" "$byobu" new-session -d -s "$session_name" </dev/null >/dev/null 2>&1 &
           sleep 0.5
         fi
 
@@ -26,4 +26,4 @@
           exit 0
         fi
 
-        "$term" --class="$scratch_app_id" -e "$zellij" attach "$session_name" >/dev/null 2>&1 &
+        "$term" --class="$scratch_app_id" -e "$byobu" attach-session -t "$session_name" >/dev/null 2>&1 &

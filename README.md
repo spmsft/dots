@@ -116,7 +116,7 @@ features.appimages.enable = true;              # Host-local AppImage support
 | `pim-apps` | `enable`, `superproductivity` | Personal information management |
 | `scanning` | `enable`, `simple-scan`, `gscan2pdf`, `tesseract` | Document scanning tools |
 | `sixel-tools` | `enable`, `chafa`, `catimg`, `mpv`, `ytdlp` | Terminal graphics & media |
-| `tui-apps` | `enable`, `btop`, `yazi`, `zellij`, `lazygit`, ... | Terminal UI applications |
+| `tui-apps` | `enable`, `btop`, `yazi`, `byobu`, `lazygit`, ... | Terminal UI applications |
 
 ## Essential Commands
 
