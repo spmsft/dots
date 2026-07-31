@@ -1,14 +1,14 @@
 {
   # TUI Apps - CachyOS native packages
+  #
+  # `byobu` is deliberately NOT listed here - it's AUR-only on Arch/CachyOS
+  # (not in the official pacman repos), but nixpkgs packages it directly,
+  # so there's no reason to pull in an AUR/paru build for a plain CLI tool
+  # like this. Leaving it unlisted means `mkEntry` falls back to the nix
+  # package (see memory-bank/decisions.md).
   btop = {
     packages = {
       pacman = [ "btop" ];
-    };
-  };
-
-  byobu = {
-    packages = {
-      paru = [ "byobu" ];
     };
   };
 

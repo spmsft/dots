@@ -4358,3 +4358,39 @@ rebuilt cleanly; confirmed (via `nix path-info
 .#homeConfigurations.default.config.home.file.".bashrc".source`) the
 guard function renders correctly into the real built `~/.bashrc` on this
 WSL host, and `bash -n` on that built file confirms valid syntax.
+
+### 2026-07-31 — `byobu` reverted from alien/paru to plain nixpkgs package
+
+Earlier this window `byobu` was routed through `alien.mkEntry` (AUR-only
+on Arch/CachyOS, since pacman's official repos don't carry it - confirmed
+via Arch's package search JSON API returning zero results). User then
+pointed out nixpkgs packages `byobu` directly
+(search.nixos.org/packages?query=byobu) and asked why an AUR/paru build
+was preferred over just using the working nix package - followed by "No
+nix only" to also drop the (valid, official-archive) Debian `apt` spec,
+i.e. use the nixpkgs package unconditionally on every distro.
+
+**Rationale:** the alien-package system exists for cases where a native
+package genuinely works *better* (system integration, faster updates,
+native deps, distro-tuned builds - see OVERVIEW.md's "Why Alien
+Packages?"), not as a blanket default. For a plain CLI tool like byobu
+with no GUI/desktop-integration angle, there's no such benefit - an
+AUR/paru build adds real cost (compile time, trust surface) for zero
+gain over the already-working nixpkgs derivation.
+
+**Fix:** removed the `byobu` alien spec entirely from both
+`modules/suites/tui-apps.cachyos-packages.nix` (was `paru = [ "byobu" ]`)
+and `modules/suites/tui-apps.debian-packages.nix` (was `apt = [ "byobu" ]`
+- even though that one was a legitimate official-archive package, not an
+AUR-style concern). `mkEntry`/`hasAlien` in `modules/core/alien-packages.nix`
+falls back to the plain `pkgs.byobu` nix package on every distro now that
+no `<feature>.<distro>-packages.nix` file defines a `byobu` spec. Added
+comments in both distro-packages files documenting why byobu is
+deliberately absent, so a future contributor doesn't "helpfully" re-add
+it.
+
+**Validated:** `nix build .#homeConfigurations.default.activationPackage
+--override-input dots-local "git+file://$HOME/dots-local" --no-link
+--no-write-lock-file` - confirmed `byobu-6.15` fetched straight from
+`cache.nixos.org` (not built via alien/paru path) after the cachyos spec
+removal; re-ran clean after the debian spec removal too.
