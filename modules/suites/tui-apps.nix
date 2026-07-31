@@ -50,6 +50,16 @@ let
       # Core TUI apps
       btop = { enable = cfg.btop; pkg = pkgs.btop; };
       byobu = { enable = cfg.byobu; pkg = pkgs.byobu; };
+      # nixpkgs's `byobu` derivation deliberately does NOT bundle/depend on
+      # `tmux` (it just execs whatever `tmux` it finds on $PATH at
+      # runtime, confirmed via `nix-store -q --requisites` on the built
+      # byobu closure - empty) - so without this, byobu silently falls
+      # back to using the system/paru-installed `tmux` binary if one
+      # happens to be on $PATH, defeating the earlier "no AUR/native
+      # build needed for a plain CLI tool" decision. Same toggle
+      # (`cfg.byobu`) since tmux is only ever used here as byobu's
+      # backend.
+      tmux = { enable = cfg.byobu; pkg = pkgs.tmux; };
       lazygit = { enable = cfg.lazygit; pkg = pkgs.lazygit; };
       yazi = { enable = cfg.yazi; pkg = pkgs.yazi; };
       pass = { enable = cfg.pass; pkg = pkgs.pass; };

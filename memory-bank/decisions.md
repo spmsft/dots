@@ -4441,3 +4441,24 @@ tweak guarantees the very next `byobu` launch picks up the change.
 **Validated:** `nix build` clean; `nix eval
 .#homeConfigurations.default.config.dots.tools` confirms the new
 `byobu-reset` entry renders with the expected synopsis/feature fields.
+
+### 2026-08-01 — nixpkgs `byobu` doesn't bundle `tmux` - was silently using paru/system tmux
+
+Caught after the previous fix: nixpkgs's `byobu` derivation does not
+depend on `tmux` at all (confirmed via `nix-store -q --requisites` on the
+built closure - no tmux path present) - it just execs whatever `tmux` it
+finds on `$PATH` at runtime. So switching `byobu` itself to the nixpkgs
+package (see the earlier "byobu reverted from alien/paru to plain
+nixpkgs package" entry) left `tmux` silently falling back to the
+paru/system-installed binary, defeating that decision's whole point for
+this suite.
+
+**Fix:** added `pkgs.tmux` to `tui-apps.nix`'s `appSet` under the same
+`cfg.byobu` toggle (tmux is only ever used here as byobu's backend). No
+alien spec exists for `tmux` anywhere in the repo (checked both
+`*.cachyos-packages.nix` and `*.debian-packages.nix`), so `mkEntry` uses
+the nix package on every distro.
+
+**Validated:** `nix build` clean; `nix eval
+.#homeConfigurations.default.config.home.packages` confirms
+`tmux-3.7b` (nixpkgs) is now in the closure.
