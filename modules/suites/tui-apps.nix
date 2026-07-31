@@ -95,6 +95,42 @@ in
       '';
     };
 
+    # Tokyo Night x solarpunk-neon crossover theme: Tokyo Night's dark
+    # base palette (#1a1b26 bg / #c0caf5 fg) with neon-green/cyan
+    # "growing circuitry" accents standing in for solarpunk's
+    # nature-meets-tech vibe, instead of Tokyo Night's usual
+    # blue/purple-only accenting. Sourced by byobu's generated tmux
+    # config as the very last include, so it can freely override any
+    # style set upstream (byobu's own `~/.byobu/.tmux.conf` hook point).
+    home.file.".byobu/.tmux.conf" = lib.mkIf cfg.byobu {
+      force = true;
+      text = ''
+        # Tokyo Night x solarpunk-neon crossover
+        set -g status-style "bg=#1a1b26,fg=#c0caf5"
+
+        set -g status-left-length 40
+        set -g status-left "#[fg=#1a1b26,bg=#9ece6a,bold] 🌿 #S #[fg=#9ece6a,bg=#1a1b26,nobold]"
+
+        set -g status-right-length 60
+        set -g status-right "#[fg=#414868,bg=#1a1b26]#[fg=#c0caf5,bg=#414868] %H:%M #[fg=#7dcfff,bg=#414868]#[fg=#1a1b26,bg=#7dcfff,bold] %d-%b-%y "
+
+        set -g window-status-format "#[fg=#7aa2f7,bg=#1a1b26] #I:#W "
+        set -g window-status-current-format "#[fg=#1a1b26,bg=#9ece6a,bold] #I:#W "
+        set -g window-status-activity-style "fg=#f7768e,bg=#1a1b26,bold"
+        set -g window-status-bell-style "fg=#e0af68,bg=#1a1b26,bold"
+
+        set -g pane-border-style "fg=#414868"
+        set -g pane-active-border-style "fg=#7dcfff"
+
+        set -g message-style "fg=#1a1b26,bg=#bb9af7,bold"
+        set -g message-command-style "fg=#1a1b26,bg=#9ece6a,bold"
+        set -g mode-style "fg=#1a1b26,bg=#bb9af7"
+
+        set -g clock-mode-colour "#9ece6a"
+        set -g clock-mode-style 24
+      '';
+    };
+
     programs.bash.initExtra = lib.mkIf cfg.byobu ''
       if [ -n "''${BYOBU_BACKEND:-}$TMUX" ] && [ -z "$BYOBU_HELP_SHOWN" ]; then
         export BYOBU_HELP_SHOWN=1

@@ -4224,3 +4224,22 @@ clean (noti + byobu backend/statusrc derivations built, no zellij
 derivations); `alienPackages.enabledPackages` confirms `byobu` is
 correctly routed to the native `pacman` package on this machine (same
 alien-first behavior zellij had).
+
+## 2026-07-31: Byobu Tokyo Night x solarpunk-neon theme
+
+Added `~/.byobu/.tmux.conf` (`modules/suites/tui-apps.nix`, `cfg.byobu`
+gated) - byobu's own hook point for a user tmux-conf snippet, sourced
+last so it overrides anything the packaged byobu status config sets.
+Palette: Tokyo Night's dark base (`#1a1b26` bg / `#c0caf5` fg,
+`#414868` for dim borders/inactive chrome) with neon-green (`#9ece6a`)
+and neon-cyan (`#7dcfff`) accents standing in for solarpunk's
+nature-meets-tech vibe (active window/pane border, session-name status
+segment) instead of Tokyo Night's usual blue/purple-only accenting -
+purple (`#bb9af7`) kept for tmux's own message/copy-mode chrome, pink
+(`#f7768e`)/amber (`#e0af68`) reserved for activity/bell alerts.
+
+**Validated:** `nix build .#homeConfigurations.default.activationPackage`
+(--no-write-lock-file) rebuilt cleanly (only the new
+`hm_.byobu.tmux.conf` derivation added); confirmed the rendered
+`~/.byobu/.tmux.conf` content in the built home-files output matches the
+intended tmux directives.
