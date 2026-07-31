@@ -4256,3 +4256,16 @@ switched it to `paru = [ "byobu" ]`. Debian/Ubuntu's official-archive
 `nix build .#homeConfigurations.default.activationPackage` rebuilt
 cleanly, now emitting byobu via the `paru`-required-packages manifest
 instead of pacman's.
+
+## 2026-07-31: Byobu theme - added solarpunk unicode ascii-art flourishes
+
+Enhanced the same-day Tokyo Night x solarpunk-neon byobu theme
+(`~/.byobu/.tmux.conf`) per explicit user follow-up request for "good
+unicode based solarpunk ascii art": added `░▒▓` Unicode Block Element
+gradient transitions (U+2591-2593, no patched/Nerd Font needed) between
+status-bar segment colors as a "dissolve" effect, plus more solarpunk/
+neon emoji (🌿⚡ session marker, 🕐 clock, 🌱 date) and bullet-style window
+markers (`○` inactive / `➤` current) replacing the plain `#I:#W` text.
+
+**Validated:** rebuilt cleanly; confirmed rendered `~/.byobu/.tmux.conf`
+in the built home-files output.

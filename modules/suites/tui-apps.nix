@@ -102,6 +102,10 @@ in
     # blue/purple-only accenting. Sourced by byobu's generated tmux
     # config as the very last include, so it can freely override any
     # style set upstream (byobu's own `~/.byobu/.tmux.conf` hook point).
+    # The ░▒▓ gradient blocks are plain Unicode (Block Elements, U+2591-
+    # 2593) - no patched/Nerd Font glyphs required - used as a fading
+    # "dissolve" transition between segment colors; 🌿/🌱/⚡/🕐 emoji lean
+    # into the solarpunk (nature) x neon (energy) crossover.
     home.file.".byobu/.tmux.conf" = lib.mkIf cfg.byobu {
       force = true;
       text = ''
@@ -109,13 +113,13 @@ in
         set -g status-style "bg=#1a1b26,fg=#c0caf5"
 
         set -g status-left-length 40
-        set -g status-left "#[fg=#1a1b26,bg=#9ece6a,bold] 🌿 #S #[fg=#9ece6a,bg=#1a1b26,nobold]"
+        set -g status-left "#[fg=#1a1b26,bg=#9ece6a,bold] 🌿⚡ #S #[fg=#9ece6a,bg=#1a1b26,nobold]░▒▓#[default]"
 
         set -g status-right-length 60
-        set -g status-right "#[fg=#414868,bg=#1a1b26]#[fg=#c0caf5,bg=#414868] %H:%M #[fg=#7dcfff,bg=#414868]#[fg=#1a1b26,bg=#7dcfff,bold] %d-%b-%y "
+        set -g status-right "#[fg=#1a1b26,bg=#1a1b26]░▒▓#[fg=#c0caf5,bg=#414868] 🕐 %H:%M #[fg=#414868,bg=#7dcfff]▓▒░#[fg=#1a1b26,bg=#7dcfff,bold] 🌱 %d-%b-%y "
 
-        set -g window-status-format "#[fg=#7aa2f7,bg=#1a1b26] #I:#W "
-        set -g window-status-current-format "#[fg=#1a1b26,bg=#9ece6a,bold] #I:#W "
+        set -g window-status-format "#[fg=#7aa2f7,bg=#1a1b26] ○ #I:#W "
+        set -g window-status-current-format "#[fg=#1a1b26,bg=#9ece6a,bold] ➤ #I:#W "
         set -g window-status-activity-style "fg=#f7768e,bg=#1a1b26,bold"
         set -g window-status-bell-style "fg=#e0af68,bg=#1a1b26,bold"
 
