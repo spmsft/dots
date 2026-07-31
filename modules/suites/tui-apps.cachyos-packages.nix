@@ -8,7 +8,7 @@
 
   byobu = {
     packages = {
-      pacman = [ "byobu" ];
+      paru = [ "byobu" ];
     };
   };
 

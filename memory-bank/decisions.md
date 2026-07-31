@@ -4243,3 +4243,16 @@ purple (`#bb9af7`) kept for tmux's own message/copy-mode chrome, pink
 `hm_.byobu.tmux.conf` derivation added); confirmed the rendered
 `~/.byobu/.tmux.conf` content in the built home-files output matches the
 intended tmux directives.
+
+## 2026-07-31: byobu is paru-only (AUR) on CachyOS, not pacman
+
+Correction to the same-day byobu-theme entry above:
+`tui-apps.cachyos-packages.nix`'s `byobu` spec was wrongly cataloged
+under `pacman`; byobu is only packaged in the AUR on Arch/CachyOS, so
+switched it to `paru = [ "byobu" ]`. Debian/Ubuntu's official-archive
+`apt` entry (`tui-apps.debian-packages.nix`) is unaffected/still correct.
+
+**Validated:** `alienPackages.enabledPackages` still lists `byobu`;
+`nix build .#homeConfigurations.default.activationPackage` rebuilt
+cleanly, now emitting byobu via the `paru`-required-packages manifest
+instead of pacman's.
