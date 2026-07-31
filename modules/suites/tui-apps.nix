@@ -131,7 +131,19 @@ in
       # Pin the tmux backend explicitly (byobu can also drive GNU screen)
       # so behavior/keybindings are consistent across machines regardless
       # of which backend happens to be installed/first-found.
-      text = "tmux\n";
+      #
+      # MUST be `BYOBU_BACKEND=tmux`, NOT a bare `tmux` - this file is
+      # `.`-sourced as a shell script by byobu's own
+      # lib/byobu/include/dirs (and elsewhere). A bare `tmux` line is
+      # therefore *executed as a command*, launching a nested tmux/byobu
+      # session from deep inside byobu's own startup script every single
+      # time this file is sourced - this was the actual root cause of the
+      # long-standing "byobu re-launches itself 2-3 times with a
+      # different theme each time on exit" bug (see memory-bank/
+      # decisions.md's dated entry - confirmed via a `set -x`-instrumented
+      # pty trace of byobu-janitor showing `+++ tmux` firing mid-script).
+      # Same class of bug as the removed `statusrc` file mentioned below.
+      text = "BYOBU_BACKEND=tmux\n";
     };
 
     # NOTE: deliberately no `~/.byobu/statusrc` here (there was one, briefly

@@ -4359,6 +4359,78 @@ rebuilt cleanly; confirmed (via `nix path-info
 guard function renders correctly into the real built `~/.bashrc` on this
 WSL host, and `bash -n` on that built file confirms valid syntax.
 
+## 2026-08-01: Real root cause of the byobu nested-relaunch/theme-cycling bug
+
+The WSL `getcwd()` guard above was a real, valid fix for a *different*
+bug, but it did **not** fix the user's main complaint: byobu still
+"relaunched" itself 2-3 times on exit, each time with a different theme
+(green default -> green default again -> finally the real solarpunk
+theme, as a `bash -l`), requiring multiple Ctrl-D's to actually quit -
+even from a completely fresh WSL-native `$HOME` directory (ruling out
+the getcwd theory as the explanation for *this* symptom). Two earlier
+attempted fixes in this saga (`byobu-reset` helper, adding `pkgs.tmux`
+explicitly since nixpkgs's `byobu` doesn't depend on it) were both
+legitimate, worthwhile changes but insufficient - the user correctly
+called this out and asked for an actual execution trace instead of more
+guessing.
+
+**Root cause (confirmed via a `set -x`-instrumented `pty.fork()` trace of
+byobu's real installed nixpkgs source, run against a fully isolated
+`$HOME`/`$TMUX_TMPDIR`/socket - never the real `$HOME`):**
+`modules/suites/tui-apps.nix` wrote `~/.byobu/backend` with the literal
+content `"tmux\n"`. Byobu's own `lib/byobu/include/dirs` (sourced from
+`include/common`, itself sourced by `.byobu`, `.byobu-janitor`, etc.)
+does `. "$BYOBU_CONFIG_DIR/backend"` - i.e. it `.`-**sources this file as
+a shell script**, not merely reads a value out of it. Byobu's own
+generator for this file (`.byobu-janitor`) writes
+`BYOBU_BACKEND=$BYOBU_BACKEND` (a variable *assignment*) - our file
+instead contained the bare word `tmux`, which, when sourced, is not an
+assignment at all but a **command invocation**: sourcing the file
+literally executes `tmux` (attaching to/creating a session) from deep
+inside byobu's own startup script, every single time that script runs.
+Since byobu's startup path sources `backend` more than once across its
+own launch sequence (directly in `.byobu`, and again inside
+`byobu-janitor`, and again in any nested re-entry), each sourcing spawned
+another nested tmux invocation - explaining both the "several nested
+layers" symptom and the theme cycling (each nested invocation started
+without the full byobu env/config context the outermost one has, so it
+rendered with tmux's bare default green status line first, only
+resolving to the correct solarpunk `.tmux.conf` theme on whichever layer
+happened to be the outermost/most-fully-initialized one). This is the
+exact same class of bug as the already-documented, already-fixed
+`statusrc` incident a few entries up ("bare words got executed as
+commands") - just in a different byobu config file, with a much worse
+symptom (silently launching nested sessions) instead of a loud "command
+not found" error, which is why it went unnoticed for longer.
+
+**Fix:** changed `home.file.".byobu/backend"`'s `text` from `"tmux\n"` to
+`"BYOBU_BACKEND=tmux\n"`, matching the format byobu's own janitor
+generates and expects when sourcing this file.
+
+**Validated:** re-ran the same isolated-`$HOME`/isolated-`$TMUX_TMPDIR`
+`pty.fork()` trace harness used to diagnose this (never touching the
+real `$HOME` or default tmux socket, per the user's standing
+constraint), copying the corrected `backend` content plus the real
+deployed `.tmux.conf`. Confirmed: (1) the solarpunk theme now renders
+immediately on first launch (no more green-default-first flash), (2)
+sending a single `exit` now causes the child process to actually
+terminate (`waitpid` returns a real exit status) with **no** further
+session/theme relaunch and **no** additional Ctrl-D's required, and (3)
+`tmux list-sessions` polled at 50ms intervals throughout shows only the
+one real session plus byobu's own normal, instantly-self-terminating
+`new-session -d byobu-janitor` housekeeping session (harmless, expected,
+unrelated to this bug). Also rebuilt
+`nix build .#homeConfigurations.default.activationPackage --override-input
+dots-local git+file://$HOME/dots-local --no-link --no-write-lock-file`
+cleanly.
+
+**Lesson for future config files sourced (not just read) by byobu (or
+any tool that `.`-sources a config file as shell): the content must
+always be a valid shell command/assignment, never a bare token or word -
+a bare word that happens to resolve to an executable on `$PATH` (like
+`tmux`) is a particularly dangerous silent-failure mode, since it runs
+successfully instead of erroring.**
+
 ### 2026-07-31 — `byobu` reverted from alien/paru to plain nixpkgs package
 
 Earlier this window `byobu` was routed through `alien.mkEntry` (AUR-only
