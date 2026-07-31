@@ -4534,3 +4534,27 @@ the nix package on every distro.
 **Validated:** `nix build` clean; `nix eval
 .#homeConfigurations.default.config.home.packages` confirms
 `tmux-3.7b` (nixpkgs) is now in the closure.
+
+## 2026-08-01: Removed `noti` (per-platform notify-send wiring not worth it)
+
+Investigated making `noti` (nixpkgs' `noti` = `codeberg.org/roble/noti`,
+not the older `variadico/noti`) route to `wsl-notify-send.exe`/Windows
+toast on this WSL2 host by default, alongside its existing dbus-based
+behavior on Wayland hosts. Read its actual source
+(`service/freedesktop/freedesktop.go`): on Linux, `noti`'s `-b`/banner
+backend talks **directly to D-Bus** (`org.freedesktop.Notifications`) -
+there is no `exec.Command("notify-send", ...)` anywhere in the codebase,
+so there's no "just point it at a different notify-send binary" knob.
+`wsl-notify-send.exe` is a standalone CLI, not a D-Bus service, so it
+can't transparently answer that D-Bus call either - making this work
+would require either a background D-Bus-to-`wsl-notify-send.exe` bridge
+daemon (a new persistent service, non-trivial to write/maintain) or
+reimplementing enough of `noti`'s process-wrapping semantics in a
+WSL-specific wrapper. Given the tool was a "nice to have" convenience
+(not load-bearing anywhere - `grep` confirmed zero other references in
+`modules/`), decided it isn't worth either cost. Removed `noti` entirely
+from `modules/core/default.nix`'s package list rather than half-fixing
+it. `pkgs.libnotify`'s `notify-send` (used directly, e.g.
+`modules/features/power-toggle.nix`) is unaffected - that call bypasses
+`noti` entirely and works fine wherever a real notification daemon is
+listening (e.g. niri/Wayland).
