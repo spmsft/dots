@@ -4269,3 +4269,17 @@ markers (`○` inactive / `➤` current) replacing the plain `#I:#W` text.
 
 **Validated:** rebuilt cleanly; confirmed rendered `~/.byobu/.tmux.conf`
 in the built home-files output.
+
+## 2026-07-31: Confirmed byobu theme doesn't clobber default keybindings
+
+User asked to make sure the byobu Tokyo Night x solarpunk-neon theme
+(`~/.byobu/.tmux.conf`) doesn't kill byobu's default shortcuts (F2-F12,
+prefix key, etc.). Verified by static inspection: every directive in
+the file is a purely cosmetic `set -g <style/format-option>` (status/
+window-status/pane-border/message/mode/clock-mode styles+formats) - none
+are `bind-key`/`unbind-key`/`set -g prefix`/`set -g mode-keys`/
+`set -g status-keys`, so byobu's own keybindings (set via `bind-key` in
+byobu's packaged config, sourced before this user hook file) are
+structurally unaffected. Added an explicit comment in the file itself
+documenting this guarantee and instructing future edits to stay
+style-only.

@@ -106,6 +106,15 @@ in
     # 2593) - no patched/Nerd Font glyphs required - used as a fading
     # "dissolve" transition between segment colors; 🌿/🌱/⚡/🕐 emoji lean
     # into the solarpunk (nature) x neon (energy) crossover.
+    #
+    # Keybindings are deliberately untouched: every directive below is a
+    # cosmetic `set -g <style/format-option>` (status/window-status/pane-
+    # border/message/mode/clock-mode styles+formats) - none of them are
+    # `bind-key`/`unbind-key`/`set -g prefix`/`set -g mode-keys`/
+    # `set -g status-keys`, so byobu's own F2-F12 shortcuts and prefix
+    # key (set via bind-key in byobu's packaged config, sourced before
+    # this file) are unaffected. Keep any future additions to this file
+    # style-only for the same reason.
     home.file.".byobu/.tmux.conf" = lib.mkIf cfg.byobu {
       force = true;
       text = ''
