@@ -119,6 +119,14 @@ home.packages = with pkgs; [
     historyControl = [ "ignoredups" "ignorespace" ];
 
     initExtra = ''
+      # Disable XON/XOFF software flow control (Ctrl-S/Ctrl-Q) on every
+      # interactive terminal - Ctrl-S freezing the terminal until Ctrl-Q
+      # is a near-universally unwanted legacy default, and freeing up
+      # Ctrl-S is handy for e.g. incremental-search keybindings. Guarded
+      # on an actual tty so this is a no-op if .bashrc ever gets sourced
+      # non-interactively (e.g. from a script).
+      [[ -t 0 ]] && stty -ixon
+
       # Home Manager sources ~/.nix-profile/etc/profile.d/{nix.sh,
       # hm-session-vars.sh} itself (confirmed live in the generated
       # .bashrc-nix), but only AFTER this initExtra block's own content -
