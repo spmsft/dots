@@ -1,4 +1,62 @@
 { pkgs, lib, inputs, config, ... }: {
+options.core.nixonPreserveVars = lib.mkOption {
+  type = lib.types.listOf lib.types.str;
+  default = [ ];
+  description = ''
+    Extra environment variable names `nixon`/`nixoff` should preserve
+    across their default (`-`) mode re-exec, on top of
+    `dotsLocal.nixonEnvAllowlist`. Intended for *modules* that need a
+    specific var to survive the environment wipe (e.g. because some
+    tool they configure relies on it being set in every shell) - end
+    users should prefer `dotsLocal.nixonEnvAllowlist` instead. Values
+    set here are merged (module-system list concatenation) with every
+    other module's contributions and with `dotsLocal.nixonEnvAllowlist`
+    at the point `nixon`/`nixoff` builds their preserve list.
+
+    Declared here (rather than in `modules/core/nixon.nix`, which is
+    the module that actually consumes it) because this file, unlike
+    `nixon.nix`, is part of `flake.nix`'s `baseModules` - shared with
+    the separate "gutter eval" sub-evaluation used to capture a clean
+    `.bashrc`/`.profile`. Any `baseModules` member (e.g. `modules/
+    suites/tui-apps.nix`) can set this option; declaring it only in
+    `nixon.nix` would make that gutter eval fail with "option does not
+    exist" the moment such a module set a value.
+  '';
+};
+
+options.core.alwaysOnPathDirs = lib.mkOption {
+  type = lib.types.listOf lib.types.str;
+  default = [ ];
+  description = ''
+    Extra absolute directories (typically a single nix-store package's
+    own `bin` dir, e.g. `"''${pkgs.tmux}/bin"`) that should always be
+    appended to `$PATH` in EVERY shell, regardless of `$NIXON` state -
+    including a fully-stripped `nixoff` shell, which otherwise has
+    nothing nix-related on `$PATH` at all (see `modules/core/
+    nixon.nix`'s "THE NIXON GATEKEEPER" section).
+
+    Unlike `~/.nix-profile/bin` (which exposes every `home.packages`
+    entry at once), each entry here is a single, specific store path -
+    intended for modules that want ONE particular nix-provided tool
+    reachable everywhere (e.g. `byobu`/`tmux`, so they work even with
+    Nix "off"), without dragging in the rest of the nix profile or
+    nix tooling itself. This is safe/self-contained: a nix-store
+    binary's runtime library dependencies (glibc, ncurses, etc.) are
+    resolved via its own embedded RPATH, not via `$PATH` - so adding a
+    directory here does not expose or require any other nix package.
+
+    Modules should only add a path here when the corresponding nix
+    package is actually in use (e.g. gated on `!alien.hasAlien` for
+    that package name) - if an alien/native package provides the same
+    tool instead, it's already on the host `$PATH` and needs no entry
+    here.
+
+    Declared here rather than in `modules/core/nixon.nix` for the same
+    "gutter eval" reason as `core.nixonPreserveVars` above.
+  '';
+};
+
+config = {
 home.packages = with pkgs; [
     # --- 1. CORE UTILITIES (Pure CLI / Automation) ---
     # Fast, silent, and scriptable tools
@@ -162,4 +220,5 @@ home.packages = with pkgs; [
       lt = lib.mkForce "lsd --tree --git";
     };
   };
+};
 }

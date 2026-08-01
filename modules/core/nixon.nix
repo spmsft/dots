@@ -10,24 +10,21 @@ let
     "( " + (lib.concatStringsSep " " (map (v: "\"${v}\"") dotsLocal.nixonEnvAllowlist)) + " )";
   nixonPreserveVarsBash =
     "( " + (lib.concatStringsSep " " (map (v: "\"${v}\"") config.core.nixonPreserveVars)) + " )";
+  alwaysOnPathDirsBash =
+    "( " + (lib.concatStringsSep " " (map (v: "\"${v}\"") config.core.alwaysOnPathDirs)) + " )";
 in
 
 {
-  options.core.nixonPreserveVars = lib.mkOption {
-    type = lib.types.listOf lib.types.str;
-    default = [ ];
-    description = ''
-      Extra environment variable names `nixon`/`nixoff` should preserve
-      across their default (`-`) mode re-exec, on top of
-      `dotsLocal.nixonEnvAllowlist`. Intended for *modules* that need a
-      specific var to survive the environment wipe (e.g. because some
-      tool they configure relies on it being set in every shell) - end
-      users should prefer `dotsLocal.nixonEnvAllowlist` instead. Values
-      set here are merged (module-system list concatenation) with every
-      other module's contributions and with `dotsLocal.nixonEnvAllowlist`
-      at the point `nixon`/`nixoff` builds their preserve list.
-    '';
-  };
+  # NOTE: `options.core.nixonPreserveVars`/`options.core.alwaysOnPathDirs`
+  # themselves are declared in `modules/core/default.nix`, NOT here -
+  # that module (unlike this one) is part of `flake.nix`'s `baseModules`,
+  # which is also used by the separate "gutter eval" sub-evaluation
+  # (captures a clean `.bashrc`/`.profile` before nixon.nix's own
+  # `.bashrc-dots`/`.profile-dots` get layered on). Other baseModules
+  # (e.g. `modules/suites/tui-apps.nix`) set these options directly, so
+  # if they were declared only here (outside baseModules), that gutter
+  # eval would fail with "option does not exist" the moment any such
+  # module set a value - hence the split.
 
   config = {
   # .bashrc-nix / .profile-nix: pure Home Manager output (via the
@@ -140,6 +137,34 @@ in
       # Less noisy bell
       echo -n -e "\e[11;30]"
       echo -n -e "\e[10;440]"
+
+      # Module-registered "always on $PATH" directories (see
+      # `core.alwaysOnPathDirs`'s option doc above) - appended here, in
+      # the universal section BEFORE the `$NIXON` if/else below, so they
+      # land on `$PATH` identically in `nixon` AND `nixoff` shells alike.
+      # Deliberately just these specific directories, not the whole
+      # `~/.nix-profile/bin` - a nix-store binary resolves its own
+      # runtime deps (glibc/ncurses/etc.) via its embedded RPATH, not
+      # `$PATH`, so this can't accidentally leak any other nix tooling.
+      # Module-registered "always on $PATH" directories (see
+      # `core.alwaysOnPathDirs`'s option doc above) - appended here, in
+      # the universal section BEFORE the `$NIXON` if/else below, so they
+      # land on `$PATH` identically in `nixon` AND `nixoff` shells alike.
+      # Deliberately just these specific directories, not the whole
+      # `~/.nix-profile/bin` - a nix-store binary resolves its own
+      # runtime deps (glibc/ncurses/etc.) via its embedded RPATH, not
+      # `$PATH`, so this can't accidentally leak any other nix tooling.
+      _dots_always_on_path_dirs=${alwaysOnPathDirsBash}
+      for _dots_always_on_path_dir in "''${_dots_always_on_path_dirs[@]}"; do
+        case ":$PATH:" in
+          *":$_dots_always_on_path_dir:"*) ;;
+          *)
+            [ -d "$_dots_always_on_path_dir" ] &&
+              export PATH="$PATH:$_dots_always_on_path_dir"
+            ;;
+        esac
+      done
+      unset _dots_always_on_path_dir _dots_always_on_path_dirs
      
       # --- 2. THE NIXON GATEKEEPER ---
       #

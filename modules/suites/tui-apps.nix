@@ -107,6 +107,23 @@ in
     (lib.mkIf cfg.enable {
     home.packages = appSet.packages ++ lib.optional cfg.byobu byobuReset;
 
+    # Keep byobu/tmux reachable even in a fully-stripped `nixoff` shell
+    # (see `core.alwaysOnPathDirs`'s option doc, modules/core/nixon.nix) -
+    # only when the nix packages are actually the ones in use. Checked
+    # via membership in `appSet.packages` (already alien-filtered by
+    # `alien.mkEntry` just above) rather than calling `alien.hasAlien`
+    # again directly here - the latter, evaluated as part of THIS
+    # option's own value, hits a module-system evaluation-order issue
+    # against `_module.args.alien`'s own `config`-conditional definition
+    # (confirmed via `nix eval`: identical `alien.hasAlien` calls succeed
+    # fine inside `appSet`/`home.packages` but fail with "attribute
+    # 'hasAlien' missing" when called directly in this option's value) -
+    # reusing the already-filtered `appSet.packages` list sidesteps it.
+    core.alwaysOnPathDirs = lib.optionals cfg.byobu (
+      lib.optional (builtins.elem pkgs.byobu appSet.packages) "${pkgs.byobu}/bin"
+      ++ lib.optional (builtins.elem pkgs.tmux appSet.packages) "${pkgs.tmux}/bin"
+    );
+
     dots.tools = lib.optional cfg.byobu {
       name = "byobu-reset";
       synopsis = "Kill the byobu-backed tmux server (prompts first) so the next 'byobu' launch starts one fresh session with the current theme/config, instead of attaching to an old stale one.";
