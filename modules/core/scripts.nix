@@ -459,6 +459,114 @@
       '
     '')
 
+    (pkgs.writeShellScriptBin "dots-ports" ''
+      #!/usr/bin/env bash
+      # dots-ports - List every currently listening TCP/UDP port on this
+      # machine: which interface it's bound to (loopback-only vs ALL
+      # interfaces vs a specific address - most dev servers should be
+      # loopback-only), which process holds it, and, when that process
+      # is a nix-store binary, which package it came from. The "what's
+      # actually exposed on the network right now" counterpart to
+      # `dots-tools`'s "what commands do I have" question - these are
+      # deliberately unrelated registries: dots-tools is a static,
+      # config-time list of hand-rolled commands (dots-ports is itself
+      # one of those entries, listed below, same as every other script
+      # in this file); dots-ports is a live, runtime snapshot of
+      # listening sockets, not a registry of anything itself.
+      #
+      # Needs `ss` (iproute2, in core's home.packages) to enumerate
+      # sockets. Process/package attribution for sockets owned by
+      # OTHER users needs root (ss's own `-p` limitation, not something
+      # this script can work around) - run via `sudo dots-ports` for a
+      # complete system-wide view; without it, those entries show
+      # "(permission denied - try: sudo dots-ports)" instead of a name.
+      #
+      # Usage: dots-ports [filter]
+      #   dots-ports          # list every listening TCP/UDP socket
+      #   dots-ports postgres # only entries whose process/port/interface
+      #                       # text contains "postgres"
+
+      set -uo pipefail
+
+      source ${./scripts/common.sh}
+
+      if ! command -v ss >/dev/null 2>&1; then
+        print_error "'ss' (iproute2) not found on \$PATH - can't enumerate listening sockets."
+        exit 1
+      fi
+
+      FILTER="''${1:-}"
+
+      classify_iface() {
+        case "$1" in
+          127.0.0.1|::1|localhost) echo "loopback ($1)" ;;
+          0.0.0.0|"*"|::)          echo "ALL interfaces ($1)" ;;
+          *)                       echo "$1" ;;
+        esac
+      }
+
+      # Resolves a PID to the nix package that owns its binary, via
+      # /proc/<pid>/exe - a nix-store path looks like
+      # /nix/store/<hash>-<name>-<version>/bin/<bin>, so stripping the
+      # hash prefix leaves "<name>-<version>", a good-enough package
+      # label without needing to query the store database. Anything
+      # outside /nix/store (system/alien/AppImage/etc. binaries) is
+      # reported as-is, tagged "(non-nix)".
+      resolve_package() {
+        local pid="$1" exe
+        exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null) || { echo "(unknown)"; return; }
+        case "$exe" in
+          /nix/store/*)
+            local rest="''${exe#/nix/store/}"
+            rest="''${rest%%/*}"
+            echo "''${rest#*-}"
+            ;;
+          *) echo "$exe (non-nix)" ;;
+        esac
+      }
+
+      print_header "🔌" "dots ports"
+      if [ -n "$FILTER" ]; then
+        echo -e "   ''${YELLOW}Filter:''${NC} ''${GREEN}$FILTER''${NC}"
+        echo ""
+      fi
+
+      printf "%-6s %-28s %-28s %-8s %s\n" "PROTO" "INTERFACE:PORT" "PROCESS" "PID" "PACKAGE"
+
+      ss -H -tulnp 2>/dev/null | while read -r netid state _recvq _sendq local _peer proc _rest; do
+        [ "$netid" = "tcp" ] || [ "$netid" = "udp" ] || continue
+
+        addr="''${local%:*}"
+        port="''${local##*:}"
+        addr="''${addr#\[}"; addr="''${addr%\]}"
+        iface=$(classify_iface "$addr")
+
+        pid=""
+        pname=""
+        if [[ "$proc" =~ users:\(\(\"([^\"]+)\",pid=([0-9]+) ]]; then
+          pname="''${BASH_REMATCH[1]}"
+          pid="''${BASH_REMATCH[2]}"
+        fi
+
+        if [ -n "$FILTER" ]; then
+          case "$pname $port $iface" in
+            *"$FILTER"*) ;;
+            *) continue ;;
+          esac
+        fi
+
+        if [ -n "$pid" ]; then
+          pkg=$(resolve_package "$pid")
+          procdisp="$pname ($pid)"
+        else
+          procdisp="(permission denied - try: sudo dots-ports)"
+          pkg="-"
+        fi
+
+        printf "%-6s %-28s %-28s %-8s %s\n" "$netid" "$iface:$port" "$procdisp" "''${pid:--}" "$pkg"
+      done
+    '')
+
     (pkgs.writeShellScriptBin "update-dots" ''
       #!/usr/bin/env bash
       # update-dots - Update dots flake inputs
@@ -859,6 +967,11 @@
     {
       name = "dots-tools";
       synopsis = "List/search non-standard tools installed by active features/suites (this command).";
+      feature = "modules/core/scripts.nix (always installed)";
+    }
+    {
+      name = "dots-ports";
+      synopsis = "List currently listening TCP/UDP ports, bound interface, process, and (if nix-managed) owning package.";
       feature = "modules/core/scripts.nix (always installed)";
     }
     {

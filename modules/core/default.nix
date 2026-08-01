@@ -73,6 +73,7 @@ home.packages = with pkgs; [
     wget                  # File downloader
     time                  # time
     mmv                   # mmv
+    iproute2              # 'ss' - listening-socket enumeration (used by dots-ports)
         
     # --- 2. ENHANCED WORKFLOW (Modern Unix Replacements) ---
     # Tools that upgrade the interactive Bash experience
