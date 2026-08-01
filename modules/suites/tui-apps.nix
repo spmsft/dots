@@ -173,17 +173,32 @@ in
     # "dissolve" transition between segment colors; 🌿/🌱/⚡/🕐 emoji lean
     # into the solarpunk (nature) x neon (energy) crossover.
     #
-    # Keybindings are deliberately untouched: every directive below is a
-    # cosmetic `set -g <style/format-option>` (status/window-status/pane-
-    # border/message/mode/clock-mode styles+formats) - none of them are
-    # `bind-key`/`unbind-key`/`set -g prefix`/`set -g mode-keys`/
-    # `set -g status-keys`, so byobu's own F2-F12 shortcuts and prefix
-    # key (set via bind-key in byobu's packaged config, sourced before
-    # this file) are unaffected. Keep any future additions to this file
-    # style-only for the same reason.
+    # Keybindings are (mostly) untouched: every `set -g <style/format-
+    # option>` directive below is cosmetic (status/window-status/pane-
+    # border/message/mode/clock-mode styles+formats) - none of them touch
+    # `bind-key`/`unbind-key`/`set -g mode-keys`/`set -g status-keys`, so
+    # byobu's own F2-F12 shortcuts are unaffected. The one deliberate
+    # exception is the leader/prefix key block at the top: byobu's
+    # packaged config (sourced before this file) hard-codes a
+    # screen-style `Ctrl-a` prefix (see `share/byobu/keybindings/
+    # tmux-screen-keys.conf`'s `unbind C-b` / `set -g prefix ^A`) - since
+    # this file is sourced last, it can freely override that back to
+    # tmux's traditional `Ctrl-b` leader. Keep any *other* future
+    # additions to this file style-only for the same reason.
     home.file.".byobu/.tmux.conf" = lib.mkIf cfg.byobu {
       force = true;
       text = ''
+        # Restore tmux's traditional Ctrl-b leader (byobu's packaged
+        # config rebinds it to a screen-style Ctrl-a - see comment
+        # above). `unbind C-a` removes byobu's prefix binding entirely;
+        # `bind C-b send-prefix` mirrors byobu's own `bind a send-prefix`
+        # pattern so `<leader> C-b` still sends a literal Ctrl-b through
+        # to a nested tmux/byobu session.
+        unbind C-a
+        set -g prefix C-b
+        set -g prefix2 F12
+        bind C-b send-prefix
+
         # Tokyo Night x solarpunk-neon crossover
         set -g status-style "bg=#1a1b26,fg=#c0caf5"
 
