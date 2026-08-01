@@ -4708,3 +4708,80 @@ user ("You DO NOT GET to search my whole filesystem!") - going forward,
 only inspect specific user-named paths or a tool's own introspection
 commands (e.g. `agency config list`, `copilot mcp --help`), never
 speculative recursive `$HOME` searches.
+
+## 2026-08-01: `features.notify` - cross-platform notification CLI (supersedes the abandoned `noti` wiring)
+
+Built `features.notify` (`modules/features/notify.nix` +
+`modules/features/notify/{notify.sh,toast.ps1}`), a real installed
+`notify` binary (via `pkgs.writeShellScriptBin`, unlike
+`features.clipboard`'s sourced bash functions - notifications are
+equally useful from cron/scripts/non-bash shells). Follows the exact
+`clipboard`/`opener` convention: backend resolved once from the shared
+`config.core.platformBackend` (`modules/core/platform.nix`), bulk logic
+lives in a static shellcheck-able `.sh` file, only a thin Nix-generated
+variable preamble is inlined.
+
+Backends: `wayland`/`x11` -> `notify-send` (libnotify, added to
+`home.packages` only on those backends); `wsl` -> a Windows toast via a
+`System.Windows.Forms.NotifyIcon` balloon tip, invoked through
+`powershell.exe`/`pwsh.exe`; `macos` -> `osascript` (added for parity
+with clipboard/opener even though not explicitly requested - not yet
+confirmed wanted by the user). Feature set: `TITLE` (required),
+`MESSAGE` (optional), `-u/--urgency low|normal|critical`, `-i/--icon
+PATH`, `-t/--timeout MS`, `-a/--app-name NAME`.
+
+This directly resolves the WSL-side gap left open by the
+2026-08-01 "Removed `noti`" entry above - rather than trying to bridge
+D-Bus `notify-send` calls to `wsl-notify-send.exe`, `features.notify`
+sidesteps the problem entirely with its own backend-dispatching CLI, so
+scripts/features that want a notification now call `notify` directly
+instead of `notify-send`/`noti`.
+
+Two implementation pitfalls found and fixed during validation:
+1. **WSL `powershell.exe`/`pwsh.exe` resolution must not rely on bare
+   name lookup** - that depends on WSL's `[interop] appendWindowsPath`
+   setting (`/etc/wsl.conf`), which isn't guaranteed on every machine.
+   Fixed per explicit user correction ("You are in a WSL2 box! Get it
+   from /mnt/c") to a fallback chain: `pwsh.exe` via `$PATH` (opportunistic)
+   -> fixed `/mnt/c/Program Files/PowerShell/7/pwsh.exe` -> guaranteed
+   `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe` ->
+   bare `powershell.exe` as last resort. The `/mnt/c` drvfs mount is far
+   more fundamental to WSL2 than PATH interop.
+2. **Nix operator precedence bug**: `pkgs.writeShellScriptBin "notify"
+   ''...'' + builtins.readFile ./notify.sh` binds `+` to the whole
+   *derivation* (function application already closed), not to the text
+   arg - silently produces a `home.packages` entry that's a *string*, not
+   a package, only caught by `nix build`'s "is not of type `package`"
+   error. Needed explicit parens: `writeShellScriptBin "notify" (''...''
+   + builtins.readFile ./notify.sh)`. Worth grep'ing for this exact
+   anti-pattern (`writeShellScriptBin ... '' + builtins.readFile`)
+   elsewhere before assuming any prior string-concatenation-into-a-Nix-
+   function-call is safe.
+
+Title/message are base64-encoded bash-side and decoded inside
+`toast.ps1` - avoids all PowerShell shell-escaping/injection concerns
+for arbitrary user text (quotes, backticks, `$`, etc.) entirely, at the
+cost of a slightly less readable script argument list.
+
+**Investigated and abandoned**: making the WSL toast display `$AppName`
+instead of `powershell.exe`/`pwsh.exe` as its Action Center source.
+Tried registering a per-`$AppName` AUMID under
+`HKCU:\Software\Classes\AppUserModelId\<aumid>` plus
+`SetCurrentProcessExplicitAppUserModelID` via P/Invoke before creating
+the `NotifyIcon` - live-tested on the real machine, confirmed this does
+**not** work for legacy `NotifyIcon`/`Shell_NotifyIcon`-based balloon
+toasts (Action Center still attributed it to PowerShell). Reliably
+overriding the source requires a fully packaged/shortcut-registered app
+identity (a persistent `.lnk` with an AUMID property in the Start Menu,
+or the modern packaged `ToastNotificationManager` API) - explicitly
+judged not worth that added complexity for a "nice to have" cosmetic
+detail; `$AppName` is still shown as the tray icon's hover tooltip text.
+Don't re-attempt the lightweight registry-only AUMID trick for this -
+it's a dead end for this NotifyIcon-based implementation.
+
+`modules/composition.nix`'s universal-imports comment block (previously
+only mentioning `opener`/`clipboard`) was extended to include
+`notify.nix`, since `modules/rules.nix` now also references
+`features.notify.enable` in both its `isWsl` rule and its
+`!isWsl && compositor != null` rule - same "must be declared regardless
+of active context" reasoning as the existing two.

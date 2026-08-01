@@ -47,21 +47,23 @@
     set = d: {
       features.opener.enable = true;
       features.clipboard.enable = true;
+      features.notify.enable = true;
       features.wsl-shell-integration.enable = true;
       home.sessionVariables.WAYLAND_DISPLAY = "wayland-0";
       home.sessionVariables.DIRENV_LOG_FORMAT = "";
     };
   }
 
-  # opener/clipboard need a UI/backend to actually do anything useful
-  # (xdg-open a browser, wl-copy into a Wayland clipboard, ...) - only
-  # enable them by default when one is actually present: a niri
-  # (currently the only supported compositor) desktop, or WSL (handled by
-  # the rule above). A host with neither (compositor == null, not WSL)
-  # stays CLI-only: opener/clipboard remain disabled, matching
-  # features.network/every other suite's off-by-default convention.
+  # opener/clipboard/notify need a UI/backend to actually do anything
+  # useful (xdg-open a browser, wl-copy into a Wayland clipboard,
+  # notify-send a toast, ...) - only enable them by default when one is
+  # actually present: a niri (currently the only supported compositor)
+  # desktop, or WSL (handled by the rule above). A host with neither
+  # (compositor == null, not WSL) stays CLI-only: these remain disabled,
+  # matching features.network/every other suite's off-by-default
+  # convention.
   # NOTE: the actual backend VALUE (wayland/x11/wsl/macos) is no longer
-  # set here - both features read the shared, derived
+  # set here - all three features read the shared, derived
   # `config.core.platformBackend` instead (modules/core/platform.nix),
   # which computes the exact same value from these same dotsLocal axes.
   # This rule only needs to decide WHETHER to enable them.
@@ -70,6 +72,7 @@
     set = d: {
       features.opener.enable = true;
       features.clipboard.enable = true;
+      features.notify.enable = true;
     };
   }
 ]

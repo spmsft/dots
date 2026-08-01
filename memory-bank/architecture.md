@@ -575,3 +575,21 @@ collected here in one place, rather than left scattered across dated
        this) - any new backend added here inherits the shared proxy's bind
        address, so this isn't a per-server decision, just a reminder not to
        add a *second*, separately-bound gateway for convenience later.
+
+9. **Add a new platform-aware `features.*` module that `modules/rules.nix`
+   needs to set (e.g. enabling it on an `isWsl`/compositor-based rule,
+   alongside `opener`/`clipboard`/`notify`)** → also add its `.nix` file
+   to `modules/composition.nix`'s *universal* top-level `imports` list
+   (NOT just a context file like `priv.nix`/`work.nix`), even if a
+   context file also imports/configures it. A NixOS/HM module option
+   must be *declared* (its module imported somewhere in the active
+   config) before any other module can set a value under that path -
+   even inside a conditionally-false `lib.mkIf` - so if `rules.nix` sets
+   `features.<name>.enable` but only `priv.nix` imports the module,
+   evaluating in `work` context (which doesn't import
+   `opener`/`clipboard`/`notify`) throws "option does not exist" (or a
+   confusing update-operator/type error, per `decisions.md`'s 2026-08-01
+   `features.notify` entry) as soon as `rules.nix`'s always-active rule
+   tries to set it. `composition.nix`'s own imports-list comment names
+   every feature this applies to - keep both the code and the comment in
+   sync when adding another one.
