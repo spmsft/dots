@@ -4621,3 +4621,90 @@ work as intended. The `nixoff` PATH fix was verified with an isolated
 `env -i HOME=/tmp/... bash` run (never touching the real `$HOME`),
 confirming `byobu`/`tmux` resolve on `$PATH` while no other nix
 user-profile tooling does.
+
+## 2026-08-01: Shared Taskwarrior + Memory MCP servers (opencode/agency), via mcp-proxy not supergateway
+
+A user-supplied "Gemini playbook" proposed deploying `supergateway` (npm)
+as a systemd --user service to front Taskwarrior/Memory MCP servers over
+SSE, shared between opencode and Microsoft's `agency`/GitHub Copilot CLI.
+Reviewed rather than executed verbatim (per house rule: present a plan
+before implementing anything design-affecting), and rejected in favor of
+a different tool after concrete verification:
+
+1. **`supergateway` was rejected.** Its full CLI arg parser (read directly
+   from `src/index.ts`) has no `--host`/`--bind`/`--address` option at
+   all, and its `stdioToSse.ts` calls `app.listen(port)` with no host
+   argument - Node's default is to bind ALL interfaces, unconditionally.
+   Confirmed this is a known, still-**open** upstream issue
+   (`supercorp-ai/supergateway#125`, "Security: Bind to localhost only,
+   not all interfaces"), not something a flag was missed for. The
+   playbook's `--apiKey`/auth-token flag also doesn't exist in the real
+   CLI (hallucinated) - the real auth flags are `--oauth2Bearer`/
+   `--header`, moot anyway once the tool itself was rejected.
+
+2. **Replaced with `pkgs.mcp-proxy`** (nixpkgs-packaged, Python,
+   `sparfenyuk/mcp-proxy` upstream - NOT `stephenlacy/mcp-proxy`, the Rust
+   one, which isn't in nixpkgs). Its `--host` flag defaults to
+   `127.0.0.1` and it supports `--named-server-config <json>` to host
+   multiple stdio MCP servers under one port at `/servers/<name>/sse` -
+   one proxy instance serves both `taskwarrior` and `memory`. No auth
+   token is used at all: since the proxy is loopback-only by
+   construction, a bearer secret would add complexity (generation,
+   storage outside the nix store, rotation) without closing any real
+   attack surface.
+
+3. **Implementation** (`modules/suites/ai-apps.nix`, all under the
+   existing `suites.ai-apps` cfg, not a new top-level feature - keeps it
+   co-configured with graphify/opencode as one file):
+   - `systemd.user.services.mcp-proxy` (declarative Home Manager unit,
+     matching `modules/features/task-sync.nix`'s precedent) -
+     `ExecStart` references `${pkgs.mcp-proxy}` directly; `Environment
+     PATH` is pinned to `${pkgs.nodejs}`/`${pkgs.taskwarrior3}` nix-store
+     paths (for `npx` and the `task` binary `mcp-server-taskwarrior`
+     shells out to), not the caller's/session's `$PATH`.
+   - The backend MCP servers themselves (`mcp-server-taskwarrior`,
+     `@modelcontextprotocol/server-memory`) are NOT in nixpkgs - run via
+     `npx -y ...` at runtime, same accepted precedent as `setup-pi`'s
+     isolated-npm-prefix install. Only the network-exposed proxy layer
+     needed to be pinned/reproducible; the stdio backends don't listen on
+     anything themselves.
+   - `suites.ai-apps.mcpServices.enable` defaults to
+     `suites.ai-apps.opencode`'s value ("enabled when opencode is
+     installed", per explicit user direction) - opencode's config
+     (`home.file .config/opencode/opencode.json`) always gets `mcp.
+     taskwarrior`/`mcp.memory` remote (SSE) entries added when enabled.
+   - Agency/Copilot registration is a **separate, manual** step via a
+     new `setup-agency-mcp` script (mirroring `setup-graphify`'s
+     install/update/remove shape) - explicitly requested by the user
+     ("if agency support would work easier with a setup script, do it").
+     It shells out to `copilot mcp add --transport sse <name> <url>` /
+     `copilot mcp remove <name>` (the CLI's own sanctioned mechanism -
+     confirmed via `copilot mcp add --help`), never hand-edits
+     `~/.copilot/mcp-config.json` directly, since that file also holds
+     live copilot-managed runtime state (tokens, trusted folders,
+     session history) that must never be blindly overwritten. It's a
+     clean no-op (exit 0) when `copilot` isn't on `$PATH`, since neither
+     `copilot` nor `agency` are nix packages in this repo.
+   - Agency itself was confirmed (via the user, and independently via
+     `agency`'s own `copilot`/`cp` subcommand execing the real `copilot`
+     binary) to be a thin wrapper around GitHub Copilot CLI that reads/
+     writes the exact same `~/.copilot/mcp-config.json` - there is
+     nothing Agency-specific left to configure once the Copilot CLI side
+     is registered.
+
+**Validated end-to-end on the real machine** (not just `nix build`):
+activated via `apply-dots`, confirmed `systemctl --user status mcp-proxy`
+came up with both `npx`-spawned backends running, `ss -tlnp` showed
+`127.0.0.1:8765` only (never `0.0.0.0`), `curl` against
+`/servers/taskwarrior/sse` returned `200 OK`, `dots-ports` correctly
+surfaced the listening socket, and `setup-agency-mcp install`/`remove`
+both round-tripped cleanly against the real `copilot mcp list` (including
+re-running `install` twice to confirm idempotency via `copilot mcp get`
+before re-adding).
+
+**Filesystem search boundary reaffirmed during this task**: an attempted
+broad `find ~ -maxdepth 3 -iname "*agency*"` search was rejected by the
+user ("You DO NOT GET to search my whole filesystem!") - going forward,
+only inspect specific user-named paths or a tool's own introspection
+commands (e.g. `agency config list`, `copilot mcp --help`), never
+speculative recursive `$HOME` searches.

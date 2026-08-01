@@ -107,6 +107,104 @@ let
     esac
   '';
 
+  # Shared Taskwarrior + Memory MCP gateway - a single loopback-only
+  # `mcp-proxy` (pkgs.mcp-proxy, nixpkgs-packaged Python, NOT the
+  # `supergateway` npm package Gemini's original playbook suggested:
+  # supergateway has no --host/--bind flag at all (confirmed by reading
+  # its full CLI arg parser - it always calls `app.listen(port)` with no
+  # host, i.e. all interfaces; see the still-open upstream issue
+  # supercorp-ai/supergateway#125 "Security: Bind to localhost only, not
+  # all interfaces"). mcp-proxy's `--host` defaults to 127.0.0.1 and its
+  # `--named-server-config` hosts multiple stdio MCP servers under one
+  # port at `/servers/<name>/sse`, so one proxy instance serves both
+  # taskwarrior and memory - no bearer token/auth is needed since nothing
+  # is ever exposed beyond loopback.
+  mcpProxyServersConfig = pkgs.writeText "mcp-proxy-servers.json" (builtins.toJSON {
+    mcpServers = {
+      taskwarrior = {
+        command = "npx";
+        args = [ "-y" "mcp-server-taskwarrior" ];
+      };
+      memory = {
+        command = "npx";
+        args = [ "-y" "@modelcontextprotocol/server-memory" ];
+        env = {
+          MEMORY_FILE_PATH = "${config.home.homeDirectory}/.local/share/dots/mcp-memory/memory.json";
+        };
+      };
+    };
+  });
+
+  mcpServicesUrl = name: "http://127.0.0.1:${toString cfg.mcpServices.port}/servers/${name}/sse";
+
+  # setup-agency-mcp {install|remove|update} - registers (or removes) the
+  # taskwarrior/memory MCP gateway with the GitHub Copilot CLI (what
+  # Microsoft's `agency` wrapper actually delegates to - `agency`
+  # execs the real `copilot` binary and reads/writes the same
+  # ~/.copilot/mcp-config.json, so there is nothing agency-specific to
+  # configure separately). Entirely a no-op (exit 0, not an error) when
+  # `copilot` isn't on $PATH - "if manually installed" per the original
+  # request, since neither `copilot` nor `agency` are nix packages here.
+  # Uses `copilot mcp add/get/remove` (the CLI's own sanctioned mechanism)
+  # rather than hand-editing that JSON file, which also holds live,
+  # copilot-managed runtime state (trusted folders, tokens, session
+  # history) that dots must never blindly overwrite.
+  setup-agency-mcp = pkgs.writeShellScriptBin "setup-agency-mcp" ''
+    set -euo pipefail
+
+    source ${../core/scripts/common.sh}
+
+    ACTION="''${1:-install}"
+
+    usage() {
+      echo "Usage: setup-agency-mcp [install|remove|update]"
+      echo ""
+      echo "  install  Register taskwarrior/memory MCP servers with 'copilot mcp' (default)"
+      echo "  update   Same as install (re-registers, in case the URL/port changed)"
+      echo "  remove   Unregister them from 'copilot mcp'"
+      echo ""
+      echo "No-ops (exit 0) if the 'copilot' CLI isn't installed - Agency/GitHub"
+      echo "Copilot CLI are not nix packages here, so this is opt-in/manual."
+    }
+
+    require_copilot() {
+      if ! command -v copilot >/dev/null 2>&1; then
+        log_info "'copilot' CLI not found on \$PATH - skipping (install GitHub Copilot CLI / Agency first if you want this)."
+        exit 0
+      fi
+    }
+
+    do_install() {
+      require_copilot
+      ${lib.concatMapStrings (name: ''
+        if copilot mcp get "${name}" >/dev/null 2>&1; then
+          log_info "'${name}' already registered with copilot mcp - re-adding to pick up any URL/port change..."
+          copilot mcp remove "${name}" >/dev/null 2>&1 || true
+        fi
+        log_info "Registering '${name}' MCP server with copilot (${mcpServicesUrl name})..."
+        copilot mcp add --transport sse "${name}" "${mcpServicesUrl name}"
+      '') [ "taskwarrior" "memory" ]}
+      log_success "Agency/Copilot MCP registration complete."
+    }
+
+    do_remove() {
+      require_copilot
+      local name
+      for name in taskwarrior memory; do
+        copilot mcp remove "$name" 2>/dev/null || true
+      done
+      log_success "Removed taskwarrior/memory MCP registration from copilot."
+    }
+
+    case "$ACTION" in
+      install) do_install ;;
+      update) do_install ;;
+      remove) do_remove ;;
+      --help|-h) usage ;;
+      *) log_error "Unknown action: $ACTION"; usage; exit 1 ;;
+    esac
+  '';
+
   pi-launcher = pkgs.writeShellScriptBin "pi" ''
     export NPM_CONFIG_PREFIX="$HOME/.local/share/pi-agent"
     export npm_config_prefix="$HOME/.local/share/pi-agent"
@@ -233,11 +331,42 @@ in
       description = "Pi packages to auto-install via 'pi install npm:<pkg>'. Names are npm package names.";
       example = [ "pi-web-access" "pi-btw" "@juicesharp/rpiv-todo" ];
     };
+
+    mcpServices = {
+      # Defaults to whatever `opencode` is set to ("enabled when opencode
+      # is installed" - opencode is the one consumer that's always
+      # wired up automatically; agency/copilot registration is separate,
+      # manual, via setup-agency-mcp, since copilot/agency aren't nix
+      # packages here). Still independently overridable.
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = cfg.opencode;
+        description = ''
+          Shared Taskwarrior + Memory MCP servers, fronted by a single
+          loopback-only `mcp-proxy` systemd --user service (never bound
+          beyond 127.0.0.1 - see the comment above `mcpProxyServersConfig`
+          for why `supergateway` was rejected). Always wired into
+          opencode's config when enabled; wiring into Agency/GitHub
+          Copilot CLI is manual via `setup-agency-mcp` (opt-in, since
+          neither is a nix package here).
+        '';
+      };
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = 8765;
+        description = "Loopback port the shared mcp-proxy gateway listens on (127.0.0.1 only).";
+      };
+    };
   };
 
   config = lib.mkIf cfg.enable {
     home.packages = appSet.packages
       ++ (lib.optional cfg.opencode setup-graphify)
+      ++ (lib.optionals cfg.mcpServices.enable [
+        pkgs.mcp-proxy
+        pkgs.nodejs
+        setup-agency-mcp
+      ])
       ++ (lib.optionals cfg.pi [
         pkgs.nodejs
         setup-pi
@@ -248,6 +377,11 @@ in
       (lib.optional cfg.opencode {
         name = "setup-graphify";
         synopsis = "install|remove|update the graphify knowledge-graph tool (git+venv, not a nix package).";
+        feature = "suites.ai-apps";
+      })
+      ++ (lib.optional cfg.mcpServices.enable {
+        name = "setup-agency-mcp";
+        synopsis = "install|remove|update the taskwarrior/memory MCP registration with Agency/GitHub Copilot CLI (opt-in, no-op if 'copilot' isn't installed).";
         feature = "suites.ai-apps";
       })
       ++ (lib.optionals cfg.pi [
@@ -278,6 +412,28 @@ in
       fi
     '';
 
+    # Shared MCP gateway - a single loopback-only mcp-proxy process
+    # fronting taskwarrior + memory (see mcpProxyServersConfig's comment
+    # above). PATH is pinned to nix-store paths (nodejs for `npx`,
+    # taskwarrior3 for the `task` binary mcp-server-taskwarrior shells
+    # out to) rather than relying on the caller's/session's $PATH, same
+    # precedent as modules/features/task-sync.nix's taskchampion-sync-server
+    # unit.
+    systemd.user.services.mcp-proxy = lib.mkIf cfg.mcpServices.enable {
+      Unit = {
+        Description = "Shared MCP gateway (taskwarrior + memory) for opencode/agency - loopback only";
+        After = [ "network.target" ];
+      };
+      Service = {
+        Environment = "PATH=${lib.makeBinPath [ pkgs.nodejs pkgs.taskwarrior3 pkgs.coreutils ]}:/usr/bin:/bin";
+        ExecStartPre = "${pkgs.coreutils}/bin/mkdir -p %h/.local/share/dots/mcp-memory";
+        ExecStart = "${pkgs.mcp-proxy}/bin/mcp-proxy --host 127.0.0.1 --port ${toString cfg.mcpServices.port} --named-server-config ${mcpProxyServersConfig}";
+        Restart = "on-failure";
+        RestartSec = 5;
+      };
+      Install.WantedBy = [ "default.target" ];
+    };
+
     home.file.".grabcontext" = lib.mkIf cfg.grabcontext {
       text = ''
         # Format: VAR=PATH
@@ -290,12 +446,20 @@ in
     };
 
     home.file.".config/opencode/opencode.json" = lib.mkIf cfg.opencode {
-      text = builtins.toJSON {
+      text = builtins.toJSON ({
         "$schema" = "https://opencode.ai/config.json";
         plugin = [
           "${config.home.homeDirectory}/.config/opencode/plugins/graphify.js"
         ];
-      };
+      } // lib.optionalAttrs cfg.mcpServices.enable {
+        # "remote" here just means "opencode talks HTTP/SSE to it" - the
+        # gateway itself is 127.0.0.1-only (see mcp-proxy service above),
+        # never actually remote/network-exposed.
+        mcp = {
+          taskwarrior = { type = "remote"; url = mcpServicesUrl "taskwarrior"; };
+          memory = { type = "remote"; url = mcpServicesUrl "memory"; };
+        };
+      });
     };
 
     home.file.".config/opencode/plugins/graphify.js" = lib.mkIf cfg.opencode {
@@ -332,6 +496,9 @@ in
       else
         echo "graphify ready. Run 'graphify' to generate knowledge graphs."
       fi
+      ${lib.optionalString cfg.mcpServices.enable ''
+        echo "mcp-proxy (taskwarrior+memory) wired into opencode's config, coexisting with graphify. Run 'setup-agency-mcp install' to also register it with Agency/GitHub Copilot CLI (no-op if 'copilot' isn't installed)."
+      ''}
     '');
 
     # Declare which alien packages are enabled

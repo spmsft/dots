@@ -555,3 +555,23 @@ collected here in one place, rather than left scattered across dated
        confirmed via `dots-ports`'s introduction (2026-07-27), which was
        tested by resolving its `.drv`'s real output path and invoking the
        built script against this machine's actual listening sockets.
+
+8. **Add a new MCP server behind the shared `mcp-proxy` gateway**
+   (`modules/suites/ai-apps.nix`'s `mcpProxyServersConfig`) → also touch,
+   in the same change:
+   - The `mcpServers.<name>` entry in `mcpProxyServersConfig` itself
+       (command/args/env for the stdio backend).
+   - `home.file ".config/opencode/opencode.json"`'s `mcp` block (add the
+       matching `type = "remote"; url = mcpServicesUrl "<name>";` entry) -
+       opencode is the "always on when enabled" consumer, so a server added
+       only to the proxy config but not here is invisible to opencode.
+   - `setup-agency-mcp`'s `[ "taskwarrior" "memory" ]` name list (both
+       `do_install`'s registration loop and `do_remove`'s removal loop) -
+       Agency/Copilot registration is manual/opt-in, but the script should
+       still know about every server the proxy hosts.
+   - Never bind the proxy itself to anything but `127.0.0.1` (see
+       `decisions.md`'s 2026-08-01 "Shared Taskwarrior + Memory MCP
+       servers" entry for why `supergateway` was rejected over exactly
+       this) - any new backend added here inherits the shared proxy's bind
+       address, so this isn't a per-server decision, just a reminder not to
+       add a *second*, separately-bound gateway for convenience later.
