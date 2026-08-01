@@ -80,6 +80,11 @@ in {
     # fonts: same reasoning again - niri-noctalia.nix contributes to
     # features.fonts.required, and niri-noctalia is itself universal.
     ./features/fonts.nix
+    # agent-instructions: default-enabled everywhere (not context-gated -
+    # every machine/context should get the shared global instructions
+    # file mirrored out to every agentic coding tool), so it's imported
+    # universally rather than from a context file.
+    ./features/agent-instructions.nix
   ] ++ lib.optional contextExists contextFile;
 
   config = lib.mkMerge ([

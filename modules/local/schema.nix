@@ -709,6 +709,22 @@ in {
       };
     };
 
+    # --- Personal addendum to the shared global agent-instructions doc
+    # (see features.agent-instructions in modules/features/) ---
+    agentInstructionsExtra = mkOption {
+      type = types.lines;
+      default = "";
+      description = ''
+        Personal/private addendum appended after the shared
+        `modules/features/agent-instructions/base.md` content when
+        rendering the global instructions file consumed by every
+        agentic coding tool (GitHub Copilot CLI, opencode, ...). Keep
+        anything here that's personal working style rather than a
+        repo-wide convention - the base file already covers the
+        latter and lives in `dots` itself.
+      '';
+    };
+
     # --- Easy shell customization (new - low-ceremony path, see
     # architecture.md section 1a) ---
     shell = mkOption {

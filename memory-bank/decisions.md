@@ -4785,3 +4785,51 @@ only mentioning `opener`/`clipboard`) was extended to include
 `features.notify.enable` in both its `isWsl` rule and its
 `!isWsl && compositor != null` rule - same "must be declared regardless
 of active context" reasoning as the existing two.
+
+## 2026-08-01: `features.agent-instructions` - one shared instructions doc mirrored to every agentic coding tool
+
+Built `features.agent-instructions` (default-enabled, universal import in
+`composition.nix`) to answer "I need a general way to ship instructions
+to each agentic coding tool" - a single canonical Markdown source,
+rendered out to every tool's own global-instructions convention rather
+than maintaining N separate files by hand:
+
+- `modules/features/agent-instructions/base.md` - the shared, versioned
+  (committed in `dots`) baseline content.
+- `modules/local/schema.nix`'s new `agentInstructionsExtra` (`types.lines`,
+  default `""`) - a private, personal addendum from `dots-local`,
+  appended after the shared base under its own "## Personal addendum"
+  heading when non-empty.
+- `modules/features/agent-instructions.nix` concatenates the two once
+  (`renderedInstructions`) and writes the identical result to:
+  - `~/.copilot/copilot-instructions.md` (GitHub Copilot CLI's own
+    documented global path - confirmed via the CLI's own `/env`-adjacent
+    "Copilot respects instructions from these locations" listing).
+  - `~/.config/opencode/AGENTS.md` (opencode's global path; opencode only
+    falls back to `~/.claude/CLAUDE.md` when this one is absent, so
+    writing this file directly is sufficient for opencode specifically).
+  - `~/.claude/CLAUDE.md` and `~/.gemini/GEMINI.md` - written proactively
+    for Claude Code/Gemini CLI even though neither is currently
+    installed on this machine, so the feature's "every agentic tool"
+    promise holds if either is added later without needing a config
+    change.
+
+Content drafted per explicit user direction, currently covering: get
+explicit review/approval before `git commit`; get explicit
+confirmation before every `git push` (a prior approval doesn't carry
+over); never scan/search large parts of the disk (especially $HOME)
+without asking first, especially before writing; use the shared
+`server-memory` MCP for durable cross-session knowledge; use the shared
+`taskwarrior` MCP tagging every task with `agent:<agent-name>
+session:<session-id>`; tag `+attention` for anything needing the human's
+own action/decision.
+
+**Validated live**: `nix build` succeeded, `apply-dots` activated
+cleanly, all four target paths confirmed as real Home Manager symlinks
+into the Nix store with byte-identical rendered content (`diff` between
+the copilot and opencode paths matched).
+
+Follows the same "one canonical source, mirrored per-consumer" shape as
+`features.notify`/`features.clipboard`'s backend-resolution pattern, and
+the same `dots` (shared, versioned) + `dots-local` (private, personal)
+split already used for e.g. `dotsLocal.shell.initExtra`.
