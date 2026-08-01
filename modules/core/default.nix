@@ -96,6 +96,7 @@ home.packages = with pkgs; [
     vivid                             # LS_COLORS generator
     gum                               # Shell script TUI components
     dufs                              # Zero-config static file/dir HTTP server (used by features.vk)
+    television                        # 'tv' - general-purpose fuzzy finder TUI (https://github.com/alexpasmantier/television)
      
     # --- 3. INTERACTIVE TUI (Full-Screen Interfaces) ---
     # Tools with persistent terminal UI/dashboards
