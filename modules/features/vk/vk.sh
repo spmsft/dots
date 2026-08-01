@@ -194,11 +194,14 @@ cd_vault() {
 # 'serve-all'. Anything left over is collected into POSITIONAL[] (e.g.
 # the vault name for 'watch') so flags can be given in any order, before
 # or after the vault name. PORT defaults to 5050 (vk's own default, not
-# dufs' built-in 5000) unless overridden; BIND stays empty and falls
-# back to dufs' own default (0.0.0.0) when unset.
+# dufs' built-in 5000) unless overridden; BIND defaults to 127.0.0.1
+# (loopback-only) rather than dufs' own default of 0.0.0.0, which would
+# otherwise expose the vault's content to the whole network by default -
+# pass -b/--bind/--host explicitly (e.g. 0.0.0.0), or the -0/--public
+# shorthand below, to opt back into that.
 parse_serve_flags() {
     PORT="5050"
-    BIND=""
+    BIND="127.0.0.1"
     POSITIONAL=()
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -218,6 +221,13 @@ parse_serve_flags() {
                 BIND="${1#*=}"
                 shift
                 ;;
+            -0|--public)
+                # Shorthand for -b/--bind 0.0.0.0 - opts back into
+                # exposing the server on every network interface,
+                # overriding the loopback-only default above.
+                BIND="0.0.0.0"
+                shift
+                ;;
             *)
                 POSITIONAL+=("$1")
                 shift
@@ -228,7 +238,9 @@ parse_serve_flags() {
 
 # Helper: build the dufs argv array (DUFS_ARGS) from PORT/BIND (set by
 # parse_serve_flags). Must run in the current shell, not a subshell/command
-# substitution, since it sets a global array.
+# substitution, since it sets a global array. BIND is always non-empty
+# now (parse_serve_flags defaults it to 127.0.0.1), so --bind is always
+# passed explicitly rather than relying on dufs' own (world-open) default.
 build_dufs_args() {
     DUFS_ARGS=()
     if [ -n "$PORT" ]; then DUFS_ARGS+=(--port "$PORT"); fi
@@ -236,10 +248,10 @@ build_dufs_args() {
 }
 
 # Helper: the URL dufs will actually be reachable at, given PORT/BIND
-# (PORT defaults to 5050 via parse_serve_flags; BIND falls back to
-# dufs' own default, 0.0.0.0, when unset).
+# (PORT defaults to 5050, BIND defaults to 127.0.0.1 - both via
+# parse_serve_flags).
 dufs_url() {
-    echo "http://${BIND:-0.0.0.0}:${PORT:-5050}"
+    echo "http://${BIND:-127.0.0.1}:${PORT:-5050}"
 }
 
 # Helper: substring/fuzzy content search over $1 (a directory - either "."
@@ -585,19 +597,20 @@ Usage:
                                              Bibentry/Link/Page (interactive)
   vk search [vault|all]                     Substring-search one vault, or every vault at once
   vk rename [old] [new]                     Rename a vault (dir + baked-in title strings)
-  vk watch [vault] [-p|--port PORT] [-b|--bind ADDR]
+  vk watch [vault] [-p|--port PORT] [-b|--bind ADDR] [-0|--public]
                                              Live Quarto preview + dufs server
-  vk build [vault] [file PATH] [-p|--port PORT] [-b|--bind ADDR]
+  vk build [vault] [file PATH] [-p|--port PORT] [-b|--bind ADDR] [-0|--public]
                                              Render the vault (or a single file) with Quarto
-  vk serve-all [-p|--port PORT] [-b|--bind ADDR]
+  vk serve-all [-p|--port PORT] [-b|--bind ADDR] [-0|--public]
                                              Host all vaults at once: / lists them, /<vault> serves it
   vk help | -h | --help                     Show this message
 
 [vault] may be omitted anywhere it's accepted - vk will prompt via gum.
 -p/--port and -b/--bind (aliases: --host) are passed straight through to
 dufs; both may also be given as --port=VALUE/--bind=VALUE, in any order,
-before or after the vault name. Left unset, vk defaults to port 5050
-(bind falls back to dufs' own default, 0.0.0.0).
+before or after the vault name. Left unset, vk defaults to port 5050,
+bind 127.0.0.1 (loopback-only). Pass -0/--public as a quick shorthand
+for -b/--bind 0.0.0.0, to expose it on every network interface instead.
 USAGEEOF
 }
 
