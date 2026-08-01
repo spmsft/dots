@@ -525,3 +525,33 @@ collected here in one place, rather than left scattered across dated
    2026-07-19 "`NIXON=1` mode never guaranteed the raw `nix` binary was
    on PATH" entry for the concrete bug this caused (`nh` failing
    `apply-dots` with "No output from nix --version command").
+
+7. **Add, rename, or remove any `dots-*` command** (`dots-tools`,
+   `dots-sync`, `dots-ports`, etc. - all currently defined in
+   `modules/core/scripts.nix` via `pkgs.writeShellScriptBin`) → also
+   update:
+   - The `dots.tools` registry entry for it at the bottom of
+     `modules/core/scripts.nix` (add/rename/remove the matching
+     `{ name = "..."; synopsis = "..."; feature = "..."; }` block) - this
+     is what `dots-tools`/`.#dotsToolsDoc` reads from, so a script left
+     unregistered here is invisible to `dots-tools` even though it's
+     installed and runnable; a renamed script left registered under its
+     old name is worse (actively misleading). `modules/core/
+     tools-registry.nix` also asserts every registered name is unique,
+     so a forgotten rename that collides with another entry fails the
+     build immediately - but a forgotten *removal* (stale name outliving
+     a deleted script) or forgotten *addition* (new script, no entry)
+     both build fine and just silently drift.
+   - Any other feature/suite's own `dots.tools` entries, if the rename
+     affects a *dots-local field name* referenced via that entry's
+     `dotsLocalSettings` list (grep for the old field name repo-wide, per
+     rule 4 above, if this applies).
+   - This is a distinct, narrower rule than rule 4 (module file renames)
+     - it's specifically about the *registry entry* staying in lockstep
+       with the *script itself*, not about grepping the whole repo for a
+       path. New `dots-*` scripts should also each get a runtime
+       smoke-test (build the derivation, run the real binary directly,
+       not just `nix build` succeeding) before being considered done -
+       confirmed via `dots-ports`'s introduction (2026-07-27), which was
+       tested by resolving its `.drv`'s real output path and invoking the
+       built script against this machine's actual listening sockets.

@@ -4558,3 +4558,66 @@ it. `pkgs.libnotify`'s `notify-send` (used directly, e.g.
 `modules/features/power-toggle.nix`) is unaffected - that call bypasses
 `noti` entirely and works fine wherever a real notification daemon is
 listening (e.g. niri/Wayland).
+
+## 2026-07-27: byobu/tmux reachable in `nixoff` shells; `tv`; `dots-ports`
+
+Three small, related additions in one session:
+
+1. **`core.alwaysOnPathDirs`** (new option, `modules/core/default.nix` -
+   declared there rather than `modules/core/nixon.nix`, because
+   `nixon.nix` is intentionally excluded from `flake.nix`'s
+   `baseModules`/gutter-eval module set, so an option only declared
+   there is invisible to any `baseModules` member that tries to set it -
+   confirmed via the "option does not exist" error hit mid-implementation
+   until the option was moved). Lets any module register a specific
+   nix-store `bin/` dir that should stay on `$PATH` in EVERY shell,
+   including a fully-stripped `nixoff` shell - `modules/core/nixon.nix`'s
+   `.bashrc-dots` consumes it (as a real bash array, `dir=( "a" "b" )`,
+   NOT `for x in ( "a" "b" )` - the latter is a syntax error, caught via
+   an isolated `env -i` runtime test). Wired up for `byobu`/`tmux` in
+   `modules/suites/tui-apps.nix`, since both are nix-only packages (no
+   alien spec exists for either) that would otherwise vanish entirely
+   in `nixoff`. Gated on membership in `appSet.packages` (already
+   alien-filtered) rather than calling `alien.hasAlien` a second time
+   directly inside the option value - the latter hit a module-system
+   evaluation-order issue specific to that call site (`nix eval`
+   confirmed: identical `alien.hasAlien` calls succeed fine when driving
+   `alien.mkEntry` inside `appSet`, but fail with "attribute 'hasAlien'
+   missing" when called again directly from `core.alwaysOnPathDirs`'s
+   own value) - not fully root-caused, but the `appSet.packages`
+   membership check sidesteps it cleanly and is arguably more directly
+   correct anyway (it's checking "is the nix package actually the one in
+   `home.packages`", which is exactly what matters here).
+   See `architecture.md` section 12 rule 6 for the existing nixon
+   PATH-audit rule this falls under.
+
+2. **`television` (`tv`)** - added to `modules/core/default.nix`'s
+   `home.packages` (nixpkgs' `pkgs.television`, provides the `tv`
+   binary). No alien spec needed/exists; plain nix package like
+   `ripgrep`/`fd`/etc.
+
+3. **`dots-ports`** - new always-installed command (`modules/core/
+   scripts.nix`, registered in the `dots.tools` registry per
+   `architecture.md` section 12's new rule 7 below) that lists every
+   currently listening TCP/UDP socket via `ss -tulnp` (needs `iproute2`,
+   now also added to `home.packages`), showing the bind interface
+   (classified loopback / ALL interfaces / specific address), owning
+   process+PID, and - if the process is a nix-store binary - the owning
+   package (parsed from `/proc/<pid>/exe`'s store path). Sockets owned by
+   other users can't be attributed without root (`ss -p`'s own
+   limitation) - flagged with a `sudo dots-ports` hint instead of being
+   silently dropped. Added `architecture.md` section 12 rule 7
+   formalizing that every `dots-*` command needs a matching
+   `dots.tools` registry entry, since this is exactly the kind of thing
+   that's easy to add and forget to register (or rename and forget to
+   re-register).
+
+**Validated:** `nix build` clean for all three; `dots-ports` in
+particular was smoke-tested against the real built binary (not just
+`nix build` succeeding) - resolved its `.drv`'s actual output path and
+ran it directly against this machine's real listening sockets, with and
+without a filter argument, confirming column output and filtering both
+work as intended. The `nixoff` PATH fix was verified with an isolated
+`env -i HOME=/tmp/... bash` run (never touching the real `$HOME`),
+confirming `byobu`/`tmux` resolve on `$PATH` while no other nix
+user-profile tooling does.
