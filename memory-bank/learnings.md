@@ -763,3 +763,155 @@ happen to be unset at that point, since nothing backfills them before
 `env -i NIXON=1 bash -l` (simulating a nixonDefault=true machine's very
 first shell with HOME/USER unset): NIX_PROFILES and
 `~/.nix-profile/bin` now resolve correctly.
+
+## MyST CLI gotchas discovered during the vk Quarto→MyST migration (2026-08-03)
+
+- `myst build --html --watch` does **not** actually rebuild on file
+  change - MyST itself prints "Site content will not be watched and
+  updated; use 'myst start' instead" at startup. Use `myst start` for
+  any live-reloading workflow; `build --html` (no `--watch`) is only for
+  one-shot static exports (confirmed it *does* exit naturally on its
+  own once the build completes, ~10-25s for a tiny project - it's not a
+  server that hangs forever).
+- `myst start --headless` (content-server only, no app server) *does*
+  rebuild files on disk when they change, but serves **stale** content
+  to already-open connections - only the full two-server mode (an app
+  server via `--port` plus an internal content server via
+  `--server-port`) actually propagates a live-reloaded page. Don't use
+  `--headless` for anything that needs to show live edits.
+- `myst start`'s bind address is controlled by the `HOST` **environment
+  variable**, not a CLI flag - and is silently forced back to
+  `localhost` unless `--keep-host` is also passed. `HOST=0.0.0.0 myst
+  start --keep-host` is the only way to bind all interfaces; omit both
+  for MyST's own (safe) loopback-only default.
+- `myst build --typst --force <file>` slugifies the output basename
+  from the source filename/title (e.g. `with_tasks.md` →
+  `with-tasks.pdf`) - don't glob `_build/exports/**/${BASE}.pdf` using
+  the *source* file's own basename, it will silently miss the real
+  output. Find the newest `.pdf`/`.typ` file under MyST's own output
+  dirs (relative to a timestamp mark taken just before the build)
+  instead - reliable since `--force` triggers exactly one export per
+  invocation.
+- The raw `.typ` Typst source for an export lives under a
+  **randomly-named** `_build/temp/myst<RANDOM>/` directory, not next to
+  the PDF in `_build/exports/`; both directories also contain a copy of
+  the compiled PDF.
+- `pandoc.SimpleTable(caption_inlines, aligns, widths, header_cells,
+  body_rows)` followed by `pandoc.utils.from_simple_table(st)` is the
+  correct, version-robust Lua API path for building a real
+  `pandoc.Table` AST node from a Lua filter - the naive
+  `pandoc.Table(...)`/`pandoc.TableBody(...)` constructors aren't
+  directly callable in Pandoc 3.7.0.2's Lua API.
+- `pandoc.pipe(cmd, args_table, input)` passes args as a real argv array
+  with no shell involved - this is what makes shelling out to an
+  external command (e.g. `task export`) from a Lua filter immune to
+  shell injection even with adversarial directive-attribute values;
+  confirmed live with a `project="demo; touch /tmp/PWNED"` attack
+  attempt.
+- MyST's static `--html` build output is a client-rendered SPA (React
+  Router/Remix-style bundle under `_build/html/build/`) whose emitted
+  asset/route hrefs are **absolute-rooted from `/` by default** - simply
+  symlinking that output tree under a subpath (e.g. for a shared
+  multi-vault hub) is not enough; the bundle will still fetch its own JS
+  from the *true* root, colliding with whatever else is mounted there.
+  MyST has no `--base-url` CLI flag, but does honor a `BASE_URL`
+  **environment variable** at build time - set it to the eventual
+  mount path (e.g. `BASE_URL=/az`) before `myst build --html` and every
+  emitted href becomes correctly prefixed. There is no way to change an
+  already-built output's base path after the fact; it must be rebuilt.
+- A bare (non-`<...>`-wrapped) CommonMark/MyST link destination
+  containing a literal space is invalid syntax - `[Title](My Note.md)`
+  parses as plain text, not a link. Any code that builds a Markdown link
+  destination from a real filename must percent-encode it first (space
+  at minimum; `#`/`?` too, since those are fragment/query delimiters in
+  a URL) - see `url_encode_path()` in `vk.sh`.
+- The pinned `mystmd` 1.9.1 (nixpkgs) always bundles the Thebe/Jupyter
+  in-browser-execution runtime (~100+ `NNNN.thebe-core.min.js` chunks
+  per `book-theme` build) with no way to opt out - `site.thebe: false`
+  is rejected by its config schema ("cannot include reserved key
+  thebe"). This was a known regression, reverted upstream in mystmd
+  1.10.1 ("Revert thebe #2903") - not yet in nixpkgs as of 2026-08.
+  These chunks aren't referenced by a page's initial HTML shell or its
+  content JSON, so they don't appear to be eagerly fetched, but they do
+  bloat every vault's `_build/html` output considerably until nixpkgs
+  catches up.
+- A MyST page's `index.json` `footer.navigation.{prev,next}.url` field
+  stays root-relative even when the site was built with `BASE_URL` set
+  - only the rendered static `<a href>` tags in the page shell get the
+  base prefix. Presumed harmless (the client router's own `basename`
+  should apply it at navigation time) but not independently verified -
+  worth checking directly if a future bug report describes broken
+  prev/next navigation specifically under a nested `BASE_URL` mount.
+
+## vk enhancement session (2026-08-04): cross-vault rename, `vk check`, native citations
+
+- Any command that runs `myst build` and then a Python static-analysis
+  pass against the *same* `.vk-staging` tree must exclude MyST's own
+  `_build/` output from that scan, exactly like vk's `explore/`
+  (generated navigation) pages already were - otherwise `_build/`'s
+  vendored theme `node_modules` files (READMEs, CHANGELOGs, LICENSEs,
+  which are real `.md` files) get treated as vault notes, producing
+  hundreds of false "duplicate id"/"label slug collision" errors. Fixed
+  in `vault_check.py`/`vault_enhance.py` via a shared
+  `_is_generated_path()` helper checking both prefixes.
+- `label_slug` (in `vault_enhance.py`'s `Note` class) is a purely
+  vk-internal computed value, not a real MyST target/anchor - MyST does
+  **not** generate an implicit project-wide target from a bare filename
+  when a note has no explicit `id` (confirmed: multiple id-less
+  same-named files, e.g. every category's own `index.md`, build fine
+  under `myst build --strict`). Any "id"-requirement or slug-collision
+  check must therefore only apply to notes that actually have an
+  explicit `id`, not vk's own structural pages (root/category
+  `index.md`, `main.md`, `imprint.md`) - these never get a vk-managed
+  `id` by design (see `_is_categorized_note()`/`STRUCTURAL_CATEGORIES`
+  in `vault_check.py`).
+- `vk check`'s `myst build` call must never write directly into
+  `.vk-staging/_build` without backing it up first: that's the exact
+  directory `myst_build()`/`vault_needs_build()` use to track a vault's
+  `BASE_URL`/fingerprint via `.base_url`/`.vk_fingerprint` marker files
+  for `build`/`watch`/`serve-all`. A raw, marker-blind build (as `check`
+  originally did) silently overwrites a vault's *currently-served*
+  nested (serve-all) build with a mismatched standalone one while
+  leaving the stale markers claiming a match - serve-all then keeps
+  serving the now-broken build until an unrelated source change forces
+  a real rebuild. Fix: back up `_build` (`mv` to a `mktemp -d`) before
+  the check's own build, then restore it afterward regardless of
+  pass/fail, so `vk check` is always side-effect-free on the serving
+  cache. Verified live: byte-identical `_build` tree (md5sum over every
+  file) before/after running `vk check` on a vault built nested with
+  `BASE_URL=/vaultname`.
+- MyST auto-discovers any `*.bib` file at the project root for native
+  `[@citekey]` citation resolution - no `myst.yml` `bibliography:` field
+  is needed unless you want to control load order or use a remote file
+  (confirmed via https://mystmd.org/guide/citations).
+- `gum`'s interactive prompts require a real TTY (`/dev/tty`) - neither
+  piping input nor faking a pty via `script -qc "..."` works (the latter
+  hangs, since `gum`'s bubbletea TUI reads raw keystrokes, not
+  line-buffered pipe data). To functionally test `vk`'s interactive
+  commands end-to-end without a TTY, either manually scaffold a vault
+  matching what the interactive code path would produce and invoke the
+  non-interactive subcommands directly, or test the underlying
+  shell/Python logic in isolation.
+- `VAULTS_DIR` is baked into the built `vk` script as a literal
+  `VAULTS_DIR="$HOME/Vaults"` shell assignment at Nix build time (from
+  `cfg.vaultsDir`), not an overridable env var at runtime. To
+  functionally test the real built binary against a scratch directory
+  without touching `$HOME/Vaults`: `sed` a copy of the real built `vk`
+  path, replacing only that one assignment, then `chmod +x` and run the
+  patched copy - every other Nix-resolved store path (`MYST_BIN`,
+  `PYTHON_BIN`, `VK_FINGERPRINT`, etc.) stays correct.
+- Writing unit tests for `vault_enhance.py`'s link resolver surfaced a
+  real latent bug: `_resolve_link_target()`'s candidate matching against
+  `by_relpath_noext` (which is how a renamed note's alias - or any
+  other note's own extensionless rel-path - is supposed to be looked
+  up) never actually stripped the `.md` extension off the candidate
+  before comparing, so an ordinary `[text](old-name.md)`-style link
+  never matched an alias, silently breaking the "old links still
+  resolve" guarantee the function's own docstring promises (only a
+  literal `{doc}`-style extensionless link happened to work). Fixed by
+  computing an extension-stripped candidate specifically for the
+  `by_relpath_noext` comparison. Note this only affects
+  `vault_enhance.py`'s own backlinks/Related-Notes navigation feature
+  for links `note_rename.py` didn't rewrite live (e.g. hand-typed links
+  added after a rename) - `note_rename.py` itself rewrites matching
+  links directly and never depended on this alias-resolution path.

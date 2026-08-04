@@ -16,6 +16,7 @@ let
       graphviz = { enable = cfg.graphviz; pkg = pkgs.graphviz; };
       pandoc = { enable = cfg.pandoc; pkg = pkgs.pandoc; };
       typst = { enable = cfg.typst; pkg = pkgs.typst; };
+      mystmd = { enable = cfg.mystmd; pkg = pkgs.mystmd; };
     };
   };
 in
@@ -27,12 +28,11 @@ in
     graphviz = coreLib.mkDefaultDisabledOption "Graphviz";
     pandoc = coreLib.mkDefaultDisabledOption "Pandoc (universal document converter)";
     typst = coreLib.mkDefaultDisabledOption "Typst (modern markup-based typesetting)";
-
-    # quarto has no Nix alien spec of its own (uses the pinned
-    # nixpkgs-quarto-pin overlay - see flake.nix's externalOverlay
-    # comment) and isn't part of appSet - stays a plain lib.mkIf package
-    # below, mirroring how dev-tools.nix originally declared it.
-    quarto = coreLib.mkDefaultDisabledOption "quarto (scientific/technical publishing)";
+    # mystmd replaces the former quarto option (removed 2026-08 - see
+    # memory-bank/decisions.md) - MyST is the primary renderer for
+    # vk's HTML/Typst/PDF output, no separate pin needed (plain
+    # nixpkgs, unlike quarto's old nixpkgs-quarto-pin).
+    mystmd = coreLib.mkDefaultDisabledOption "MyST (mystmd - Markdown/Typst/PDF document engine)";
   };
 
   config = lib.mkMerge [
@@ -45,7 +45,7 @@ in
     # `suites.dtp-tools.enable` anywhere else always wins.
     { suites.dtp-tools.enable = lib.mkDefault config.suites.tui-apps.enable; }
 
-    # quarto/typst/pandoc are lightweight, broadly useful document tools -
+    # mystmd/typst/pandoc are lightweight, broadly useful document tools -
     # default them on whenever the suite itself is on. graphviz/
     # imagemagick are mostly useful alongside an actual GUI (rendering
     # diagrams/images you'll then look at) - same global condition
@@ -53,7 +53,7 @@ in
     # enableGuiDefaults, purely dotsLocal-derived - see modules/core/
     # platform.nix).
     {
-      suites.dtp-tools.quarto = lib.mkDefault cfg.enable;
+      suites.dtp-tools.mystmd = lib.mkDefault cfg.enable;
       suites.dtp-tools.typst = lib.mkDefault cfg.enable;
       suites.dtp-tools.pandoc = lib.mkDefault cfg.enable;
       suites.dtp-tools.graphviz = lib.mkDefault config.core.enableGuiDefaults;
@@ -61,9 +61,7 @@ in
     }
 
     (lib.mkIf cfg.enable {
-      home.packages = (with pkgs; builtins.filter (p: p != null) [
-        (lib.mkIf cfg.quarto quarto)
-      ]) ++ appSet.packages;
+      home.packages = appSet.packages;
 
       alienPackages.enabledPackages = appSet.alienEnabled;
     })

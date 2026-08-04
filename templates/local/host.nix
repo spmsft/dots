@@ -23,7 +23,7 @@
   # their toggles - this is just a representative sample, not exhaustive).
   # suites.gui-apps.enable = true;
   # suites.dev-tools.rust = true;
-  # suites.dtp-tools.quarto = true;
+  # suites.dtp-tools.mystmd = true;
   # suites.network-tools.bandwhich = true;
   # suites.cloud-tools.azure = true;
 

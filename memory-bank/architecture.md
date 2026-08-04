@@ -136,6 +136,14 @@ explicit user decision (see `decisions.md`). An authorized exception to
 the framing above, not a silent reversal - the "no accidental drops"
 intent still stands for everything else.
 
+**Update (2026-08-03)**: `nixpkgs-quarto-pin` (and its `quarto` overlay
+substitution) has been **deliberately removed** as part of the vk
+Quarto→MyST/Pandoc migration (see `decisions.md`) - `vk` now renders
+through plain-nixpkgs `mystmd`/`pandoc`/`typst`, none of which need a
+pinned nixpkgs revision. This is an intentional current-state change,
+not accidental drift; the rest of the flake-input inventory above is
+still accurate.
+
 ### 1c. When config loses its home in `dots`, document its `dots-local` replacement
 
 **Explicit user directive.** As Phase 1/2 strip host-specific and

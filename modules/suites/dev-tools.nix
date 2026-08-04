@@ -92,7 +92,7 @@ in
     # Web development tools
     mkcert = coreLib.mkDefaultDisabledOption "mkcert (locally-trusted development certificates)";
 
-    # Document/Publishing tools moved to suites.dtp-tools (quarto/typst/
+    # Document/Publishing tools moved to suites.dtp-tools (mystmd/typst/
     # pandoc) - see that suite's own module for the full rationale.
 
     # Lua tooling - defaults come from dotsLocal.lua.* (see

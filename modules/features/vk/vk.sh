@@ -3,26 +3,33 @@
 #
 # The Nix-level preamble (modules/features/vk.nix) resolves every external
 # binary this script needs into the *_BIN variables below, and sets
-# VAULTS_DIR/VK_FILTERS_SRC_DIR/VK_SHORTCODES_SRC_DIR before sourcing
-# this file - keeping this static, shellcheck-able body free of any Nix
-# syntax (mirrors the viewer.nix/clipboard.nix pattern: small Nix
-# preamble + real shell file).
+# VAULTS_DIR/IMPRINT_MD_SRC/VK_TASKWARRIOR_LUA/VK_TASKWARRIOR_PREPROCESS
+# before sourcing this file - keeping this static, shellcheck-able body
+# free of any Nix syntax (mirrors the viewer.nix/clipboard.nix pattern:
+# small Nix preamble + real shell file).
+#
+# Rendering architecture (migrated 2026-08 from Quarto - see
+# memory-bank/decisions.md): MyST (mystmd) is vk's only Markdown parser
+# and site/document renderer. Pandoc is used only as a narrow,
+# preprocessing-only step for `taskwarrior` directive blocks (see
+# stage_vault() below and filters/taskwarrior.lua) - the rest of every
+# document is untouched MyST syntax that only MyST ever sees.
 set -euo pipefail
 
 mkdir -p "$VAULTS_DIR"
 
 # Helper: list every real vault's name, one per line, sorted
 # alphabetically. A "real" vault is any $VAULTS_DIR subdirectory that
-# owns its own _quarto.yml (written by 'vk new') - this deliberately
+# owns its own myst.yml (written by 'vk new') - this deliberately
 # excludes $VAULTS_DIR's own root-project artifacts ('vk serve-all'
-# regenerates _site/, site_libs/, .quarto/, index.md, imprint.md and
-# _quarto.yml directly inside $VAULTS_DIR itself, none of which are
-# vaults) from ever appearing in a vault picker or listing.
+# regenerates its _build/, myst.yml, index.md, imprint.md directly
+# inside $VAULTS_DIR itself, none of which are vaults) from ever
+# appearing in a vault picker or listing.
 list_vaults() {
     local v name
     for v in "$VAULTS_DIR"/*/; do
         v="${v%/}"
-        [ -f "$v/_quarto.yml" ] || continue
+        [ -f "$v/myst.yml" ] || continue
         name=$(basename "$v")
         echo "$name"
     done | sort
@@ -44,12 +51,12 @@ get_vault() {
 }
 
 # Helper: ensure a vault has its own main.md - the free-form, hand-edited
-# landing-page content that index.md includes via a quarto shortcode
-# (see 'new' and index.md's template below). Only ever generated when
-# missing (never overwritten). Seeded empty: index.md's own front-matter
-# "title" already renders the vault name as the page header via
-# quarto's title block, so an explicit "# $name" heading here would
-# just duplicate it in the body.
+# landing-page content that index.md includes via MyST's native
+# `{include}` directive (see 'new' and index.md's template below). Only
+# ever generated when missing (never overwritten). Seeded empty:
+# index.md's own front-matter "title" already renders the vault name as
+# the page header, so an explicit "# $name" heading here would just
+# duplicate it in the body.
 ensure_main_md() {
     local path="$1"
     if [ ! -f "$path/main.md" ]; then
@@ -57,67 +64,22 @@ ensure_main_md() {
     fi
 }
 
-# Helper: (re)install every vk-managed Lua filter/shortcode into vault
-# $1 - unlike main.md/imprint.md (only seeded if missing, since those
-# are meant to be hand-edited), these are vk-owned script files never
-# meant to be hand-edited in a vault, so a vk.sh upgrade should always
-# propagate to every existing vault on next use. Each file is
-# compared before writing (see the cmp -s guard below) rather than
-# unconditionally cp'd, purely to avoid bumping mtimes when nothing
-# actually changed - see that guard's own comment for why that matters.
-#
-# Two different kinds, mirroring how quarto itself distinguishes them:
-#   - Plain whole-document AST filters (VK_FILTERS_SRC_DIR/*.lua, e.g.
-#     wikilinks.lua) are copied to the vault root and referenced via
-#     _quarto.yml's format.html.filters: list - ensure_quarto_filters_yml()
-#     (below) keeps that list in sync idempotently.
-#   - Shortcode extensions (VK_SHORTCODES_SRC_DIR/*/, e.g.
-#     shortcodes/taskwarrior/) are quarto extensions proper (their own
-#     _extension.yml + .lua), copied wholesale into the vault's
-#     _extensions/<name>/ - quarto auto-discovers any shortcode
-#     extension present there, no _quarto.yml wiring needed at all.
-sync_vk_filters() {
-    local path="$1"
-    local filter_src filter_base shortcode_dir shortcode_base f rel
-    mkdir -p "$path/_extensions"
-    for filter_src in "$VK_FILTERS_SRC_DIR"/*.lua; do
-        [ -e "$filter_src" ] || continue
-        filter_base=$(basename "$filter_src")
-        # cmp -s guard before writing - a plain unconditional `cp` would
-        # bump the destination's mtime on every call even when content
-        # is unchanged, which would make vault_needs_build() (mtime-
-        # based) think the vault changed on *every single* serve-all
-        # poll, rebuilding forever (the same class of bug already fixed
-        # once for regen_category_index()/root index.md - see
-        # memory-bank/decisions.md's 2026-07-23 entries).
-        cmp -s "$filter_src" "$path/$filter_base" 2>/dev/null || cp "$filter_src" "$path/$filter_base"
-        ensure_quarto_filters_yml "$path" "$filter_base"
-    done
-    for shortcode_dir in "$VK_SHORTCODES_SRC_DIR"/*/; do
-        [ -d "$shortcode_dir" ] || continue
-        shortcode_base=$(basename "$shortcode_dir")
-        mkdir -p "$path/_extensions/$shortcode_base"
-        while IFS= read -r -d '' f; do
-            rel="${f#"$shortcode_dir"}"
-            cmp -s "$f" "$path/_extensions/$shortcode_base/$rel" 2>/dev/null || \
-                cp "$f" "$path/_extensions/$shortcode_base/$rel"
-        done < <(find "$shortcode_dir" -type f -print0)
-    done
-}
-
-# Helper: ensure _quarto.yml at $1 lists filter $2 under
-# format.html.filters: - idempotent (no-op if already listed), and a
-# no-op entirely if the vault has no _quarto.yml yet (shouldn't happen
-# in practice - 'vk new' always writes one before ever calling
-# sync_vk_filters(), but this guards against a partially-initialized
-# vault directory).
-ensure_quarto_filters_yml() {
-    local quarto_yml="$1/_quarto.yml" filter_base="$2"
-    [ -f "$quarto_yml" ] || return 0
-    grep -qxF "      - $filter_base" "$quarto_yml" && return 0
-    if grep -qx "    filters:" "$quarto_yml"; then
-        sed -i "/^    filters:\$/a\\      - $filter_base" "$quarto_yml"
-    fi
+# Helper: percent-encode the characters in a relative path/filename that
+# are unsafe inside a bare (non-`<...>`-wrapped) CommonMark/MyST link
+# destination - most importantly the literal space, which otherwise
+# makes the whole `[Title](...)` construct parse as plain text instead
+# of a link (confirmed live with note filenames like "Agentic Coding
+# Tools.md"). Deliberately narrow (space only, plus '#'/'?' which would
+# otherwise be misread as a fragment/query delimiter) rather than a full
+# RFC 3986 encoder - vault note filenames are user-chosen but simple;
+# this covers every character actually seen in practice without touching
+# the '/' path separators callers rely on.
+url_encode_path() {
+    local s="$1"
+    s="${s// /%20}"
+    s="${s//#/%23}"
+    s="${s//\?/%3F}"
+    printf '%s' "$s"
 }
 
 # Helper: (re)generate one category's own index.md as an actual listing
@@ -128,7 +90,17 @@ ensure_quarto_filters_yml() {
 # generated content actually differs, so an unrelated call (e.g. from
 # serve-all's polling loop) doesn't spuriously bump this file's mtime
 # and trigger vault_needs_build() to rebuild the vault every single
-# poll even when nothing really changed.
+# poll even when nothing really changed. Links use plain CommonMark/MyST
+# document links (no wikilink syntax - MyST doesn't support it and
+# resolves relative .md links natively).
+#
+# Link destinations are run through url_encode_path() (below) since a
+# literal space (or other CommonMark-unsafe character) in a link
+# destination isn't valid Markdown syntax unless the destination is
+# wrapped in `<...>` - a plain `[Title](My Note.md)` gets parsed as
+# literal text rather than a link (confirmed live: notes with spaces in
+# their filename, e.g. "Agentic Coding Tools.md", showed up unrendered
+# in the built category listing page).
 regen_category_index() {
     local dir="$1" title="$2"
     local f base note_title tmp
@@ -139,8 +111,8 @@ regen_category_index() {
         echo '---'
         echo
         # No body heading here - front matter's "title" above already
-        # renders as the page header via quarto's title block, so a
-        # "# $title" heading here would just duplicate it.
+        # renders as the page header, so a "# $title" heading here
+        # would just duplicate it.
         for f in "$dir"/*.md; do
             [ -e "$f" ] || continue
             base=$(basename "$f")
@@ -149,7 +121,7 @@ regen_category_index() {
             [ -z "$note_title" ] && note_title="${base%.md}"
             printf '%s\t%s\n' "$note_title" "$base"
         done | sort | while IFS=$'\t' read -r note_title base; do
-            echo "- [[$base|$note_title]]"
+            echo "- [$note_title]($(url_encode_path "$base"))"
         done
     } > "$tmp"
     if ! cmp -s "$tmp" "$dir/index.md" 2>/dev/null; then
@@ -170,6 +142,125 @@ regen_category_indexes() {
     regen_category_index "$vault_path/texts" "Texts"
 }
 
+# Helper: does file $1 contain at least one MyST taskwarrior directive
+# block? Cheap pre-check so stage_vault() only shells out to Python for
+# files that actually need it.
+file_has_taskwarrior_directive() {
+    "$RG_BIN" -q '^:{3,}\{taskwarrior\}' "$1" 2>/dev/null
+}
+
+# Same cheap pre-check for the graphviz directive (see
+# scripts/graphviz_preprocess.py).
+file_has_graphviz_directive() {
+    "$RG_BIN" -q '^:{3,}\{graphviz\}' "$1" 2>/dev/null
+}
+
+# Helper: (re)build vault $1's disposable staging tree at
+# "$1/.vk-staging" - the tree MyST actually builds. Ordinary files are
+# copied unchanged; any Markdown file containing a `taskwarrior`
+# directive is first run through the Pandoc+Lua preprocessing step (see
+# scripts/taskwarrior_preprocess.py and filters/taskwarrior.lua), which
+# rewrites only those directive blocks and leaves everything else in the
+# file byte-identical. MyST itself only ever sees the staged tree, so a
+# full Pandoc round-trip - and any risk of it mangling MyST-only syntax
+# elsewhere in a document - never happens.
+#
+# Every write is guarded by `cmp -s` before replacing the destination so
+# an unchanged file's mtime never bumps - this both avoids spurious
+# vault_needs_build() rebuilds and lets MyST's own incremental build
+# cache (under .vk-staging/_build) actually help on repeat builds.
+stage_vault() {
+    local path="$1" staging="$1/.vk-staging"
+    mkdir -p "$staging"
+    local f rel dest tmp tmp2 cur changed
+    while IFS= read -r -d '' f; do
+        rel="${f#"$path"/}"
+        dest="$staging/$rel"
+        mkdir -p "$(dirname "$dest")"
+        case "$rel" in
+            *.md)
+                # Chain both directive preprocessors (each is a no-op
+                # pass-through when its directive is absent from the
+                # file): taskwarrior first, then graphviz, so a note can
+                # freely use either or both. `changed` tracks whether any
+                # stage actually ran, so an unmodified file still takes
+                # the cheap "copy only if different" path below instead
+                # of always writing a temp file.
+                cur="$f"
+                changed=0
+                if file_has_taskwarrior_directive "$f"; then
+                    tmp="$dest.vk-tmp"
+                    "$PYTHON_BIN" "$VK_TASKWARRIOR_PREPROCESS" "$cur" "$tmp" \
+                        --pandoc "$PANDOC_BIN" --lua-filter "$VK_TASKWARRIOR_LUA"
+                    cur="$tmp"
+                    changed=1
+                fi
+                if file_has_graphviz_directive "$cur"; then
+                    tmp2="$dest.vk-tmp2"
+                    mkdir -p "$staging/assets"
+                    "$PYTHON_BIN" "$VK_GRAPHVIZ_PREPROCESS" "$cur" "$tmp2" \
+                        --staging-assets-dir "$staging/assets" \
+                        --dot "$GRAPHVIZ_DOT_BIN" --neato "$GRAPHVIZ_NEATO_BIN" \
+                        --fdp "$GRAPHVIZ_FDP_BIN" --sfdp "$GRAPHVIZ_SFDP_BIN" \
+                        --circo "$GRAPHVIZ_CIRCO_BIN" --twopi "$GRAPHVIZ_TWOPI_BIN"
+                    [ "$cur" = "$dest.vk-tmp" ] && rm -f "$dest.vk-tmp"
+                    mv "$tmp2" "$dest.vk-tmp"
+                    cur="$dest.vk-tmp"
+                    changed=1
+                fi
+                if [ "$changed" = "1" ]; then
+                    if ! cmp -s "$cur" "$dest" 2>/dev/null; then mv "$cur" "$dest"; else rm -f "$cur"; fi
+                else
+                    cmp -s "$f" "$dest" 2>/dev/null || cp "$f" "$dest"
+                fi
+                ;;
+            *)
+                cmp -s "$f" "$dest" 2>/dev/null || cp "$f" "$dest"
+                ;;
+        esac
+    done < <(find "$path" -mindepth 1 \
+        \( -path "$path/.vk-staging" -o -path "$path/.git" -o -path "$path/exports" \) -prune -o \
+        -type f -print0)
+
+    # Managed visual layer: concatenate the shared Tokyo-Night/solarpunk
+    # stylesheet with an optional per-vault assets/vk-custom.css override
+    # (appended after, so vault-specific rules win any selector tie)
+    # into one staged stylesheet. vault_enhance.py points
+    # site.options.style at this file unless the vault's own myst.yml
+    # already sets its own style. Diff-guarded like every other staged
+    # write, so an unchanged result never bumps this file's mtime.
+    mkdir -p "$staging/assets"
+    tmp="$staging/assets/vk-managed.css.vk-tmp"
+    cat "$VK_THEME_CSS" > "$tmp"
+    if [ -f "$path/assets/vk-custom.css" ]; then
+        printf '\n' >> "$tmp"
+        cat "$path/assets/vk-custom.css" >> "$tmp"
+    fi
+    if ! cmp -s "$tmp" "$staging/assets/vk-managed.css" 2>/dev/null; then
+        mv "$tmp" "$staging/assets/vk-managed.css"
+    else
+        rm -f "$tmp"
+    fi
+    # Default logo/favicon: only written when the vault has no asset of
+    # its own at this path (the plain-copy loop above would already have
+    # staged it) - a vault-provided assets/vk-logo.svg always wins.
+    if [ ! -f "$staging/assets/vk-logo.svg" ]; then
+        cp "$VK_LOGO_SVG" "$staging/assets/vk-logo.svg"
+    fi
+
+    # Second staging pass: frontmatter/config analysis (see
+    # vault_enhance.py's own docstring for exactly what this does today
+    # and what it's the deterministic seam for later). Runs after every
+    # plain/Taskwarrior-preprocessed file - and the managed CSS/logo
+    # assets above - are in place so it can read the final staged tree,
+    # and before myst_build() so its staged myst.yml merge (including
+    # the style/logo defaults pointing at the assets just written) is
+    # what MyST actually builds.
+    "$PYTHON_BIN" "$VK_VAULT_ENHANCE" "$path" "$staging" \
+        --managed-plugin "$VK_PLUGIN_SUBSTITUTIONS" \
+        --managed-plugin "$VK_PLUGIN_COLLECT_REFERENCES"
+}
+
 # Helper: cd into an existing vault, or fail with a clear message instead
 # of a bare "set -e" exit from a failed cd.
 cd_vault() {
@@ -185,7 +276,6 @@ cd_vault() {
     fi
     ensure_main_md "$path"
     regen_category_indexes "$path"
-    sync_vk_filters "$path"
     cd "$path"
 }
 
@@ -267,7 +357,7 @@ search_content() {
     # gum >=0.14 dropped the old --ansi flag in favor of --strip-ansi/
     # --no-strip-ansi (default: don't strip), so no flag is needed here
     # to preserve rg's --color=always highlighting.
-    selection=$("$RG_BIN" --line-number --no-heading --color=always --glob '!_site/**' --glob '!_extensions/**' --glob '!site_libs/**' --glob '!.quarto/**' . "$root" | "$GUM_BIN" filter --placeholder "$placeholder")
+    selection=$("$RG_BIN" --line-number --no-heading --color=always --glob '!.vk-staging/**' --glob '!exports/**' --glob '!_build/**' . "$root" | "$GUM_BIN" filter --placeholder "$placeholder")
     if [ -z "$selection" ]; then exit 1; fi
     local file line
     file=$(echo "$selection" | cut -d: -f1)
@@ -289,24 +379,38 @@ prompt_category_type() {
     esac
 }
 
+# Helper: slugify $1 into a lowercase, hyphen-separated token suitable
+# for a stable frontmatter `id` - keeps only [a-z0-9-], collapses runs
+# of separators, and trims leading/trailing hyphens.
+slugify() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed -E 's/-+/-/g; s/^-|-$//g'
+}
+
 # Helper: write a new note file at "$CAT/$TITLE.md" with standard
-# front matter (records get a full date+time stamp, others just a
-# date - see 'vk note's original comment on why), and a body read from
-# stdin. Sets NOTE_FILE to the written path. Shared by 'vk note's
-# "Create Note" action and every 'vk import' mode.
+# front matter - a stable `id` (category-type-slug), `title`, `type`,
+# `tags` derived from category+type, and an ISO-compatible date/datetime
+# (records get a full timestamp, others just a date - see 'vk note's
+# original comment on why) - and a body read from stdin. `exports:`
+# is deliberately NOT added here - it stays opt-in per vk's design (see
+# 'vk export' below for a way to force a PDF/Typst export without
+# touching a note's frontmatter). Sets NOTE_FILE to the written path.
+# Shared by 'vk note's "Create Note" action and every 'vk import' mode.
 write_note() {
     local cat="$1" type="$2" title="$3"
     local file="$cat/${title%.md}.md"
-    local date_stamp
+    local date_stamp id_slug
     if [ "$cat" = "records" ]; then
-        date_stamp=$(date '+%Y-%m-%d %H:%M')
+        date_stamp=$(date -Iseconds)
     else
-        date_stamp=$(date +%Y-%m-%d)
+        date_stamp=$(date -I)
     fi
+    id_slug=$(slugify "${title%.md}")
     {
         echo "---"
+        echo "id: ${cat}-${type}-${id_slug}"
         echo "title: \"${title//_/ }\""
         echo "type: $type"
+        echo "tags: [$cat, $type]"
         echo "date: $date_stamp"
         echo "---"
         echo
@@ -329,70 +433,6 @@ extract_meta_tag() {
     printf '%s' "$val"
 }
 
-# Helper: best-effort BibTeX field extraction from a pasted entry $1 -
-# handles both brace-delimited (`title = {Foo}`) and quote-delimited
-# (`title = "Foo"`) values, case-insensitively (BibTeX field names are
-# conventionally lowercase but not enforced). Prints the value
-# (possibly empty).
-bib_field() {
-    local entry="$1" field="$2" val=""
-    val=$(printf '%s' "$entry" | "$RG_BIN" -o -N -i "$field\s*=\s*[{\"]([^}\"]*)[}\"]" -r '$1' | head -1) || true
-    printf '%s' "$val"
-}
-
-# Helper: render a pasted BibTeX entry $1 as a single human-readable
-# citation line - "Authors. *Title*. Rest." (title italicized,
-# remaining bits - venue/volume/pages/year - comma-joined into "Rest"),
-# rather than reaching for citeproc's default CSL style (which
-# typically quotes article titles and italicizes the *venue* instead -
-# the opposite of what was wanted here). Falls back to pandoc
-# --citeproc only if no title/author could be parsed at all (e.g. a
-# malformed or unusually-shaped entry).
-format_bib_entry() {
-    local entry="$1"
-    local authors title year venue volume pages rest formatted
-    authors=$(bib_field "$entry" author)
-    authors="${authors// and /, }"
-    title=$(bib_field "$entry" title)
-    year=$(bib_field "$entry" year)
-    venue=$(bib_field "$entry" journal)
-    [ -z "$venue" ] && venue=$(bib_field "$entry" booktitle)
-    [ -z "$venue" ] && venue=$(bib_field "$entry" publisher)
-    volume=$(bib_field "$entry" volume)
-    pages=$(bib_field "$entry" pages)
-
-    if [ -z "$title" ] && [ -z "$authors" ]; then
-        local citekey tmp_dir
-        citekey=$(printf '%s' "$entry" | "$RG_BIN" -o -N '^@\w+\{([^,]+),' -r '$1' | head -1)
-        if [ -n "$citekey" ]; then
-            tmp_dir=$(mktemp -d)
-            echo "$entry" > "$tmp_dir/refs.bib"
-            printf '[@%s]\n' "$citekey" > "$tmp_dir/cite.md"
-            formatted=$("$PANDOC_BIN" "$tmp_dir/cite.md" --citeproc --bibliography="$tmp_dir/refs.bib" --to plain 2>/dev/null || true)
-            rm -rf "$tmp_dir"
-        fi
-        [ -z "$formatted" ] && formatted="(Could not render a formatted citation - check the pasted BibTeX entry is valid.)"
-        printf '%s' "$formatted"
-        return
-    fi
-
-    rest=""
-    [ -n "$venue" ] && rest="$venue"
-    if [ -n "$volume" ]; then
-        rest="${rest:+$rest, }vol. $volume"
-    fi
-    if [ -n "$pages" ]; then
-        rest="${rest:+$rest, }pp. $pages"
-    fi
-    [ -n "$year" ] && rest="${rest:+$rest, }$year"
-
-    formatted=""
-    [ -n "$authors" ] && formatted="$authors. "
-    formatted="${formatted}*${title:-Untitled}*."
-    [ -n "$rest" ] && formatted="$formatted $rest."
-    printf '%s' "$formatted"
-}
-
 # Helper: 'vk import file'/'vk import page' both need MarkItDown
 # (Microsoft's file/URL -> Markdown converter) - deliberately NOT
 # nix-packaged (nixpkgs' python3Packages.markitdown pulls a huge,
@@ -407,66 +447,142 @@ require_uvx() {
     fi
 }
 
-# Helper: does vault $1 (a path) have any source file newer than its
-# own _site output, or no _site at all yet? Drives serve-all's
-# automatic per-vault rebuild-on-change - excludes quarto's own
-# generated/cache dirs (and .git) from the comparison so a stale _site
+# Helper: does vault $1 (a path) have any source file newer than its own
+# staged build output, or no build at all yet? Drives serve-all's
+# automatic per-vault rebuild-on-change - excludes vk's own
+# generated/cache dirs (and .git) from the comparison so a stale build
 # doesn't "self-trigger" a rebuild forever once one has run.
+#
+# $2 is the base-url the build is expected to have been produced with
+# (see myst_build() below) - "" for a standalone vault served at its own
+# root, or "/<vault-name>" when nested under serve-all's hub. A mismatch
+# (e.g. a vault previously built standalone via 'vk build' and now being
+# picked up by 'vk serve-all', or vice versa) forces a rebuild even if no
+# source file changed, since the two builds' baked-in asset/route paths
+# are not interchangeable - reusing the wrong one is exactly what caused
+# MyST's client-side router to throw "Cannot read properties of
+# undefined (reading 'handle')" when a vault built for "/" was symlinked
+# and navigated to under "/<vault-name>/" (confirmed live: BASE_URL
+# controls the base path MyST's Remix-based client bundle assumes it is
+# served from - unset, every asset/route is absolute from "/").
+#
+# Also forces a rebuild when $VK_FINGERPRINT (baked in by vk.nix from the
+# enhancer script/CSS/plugin-bundle store paths - see vkFingerprint
+# there) no longer matches the fingerprint recorded at the vault's last
+# build, so a `vk` upgrade alone (no vault source file touched) still
+# picks up new staging-pipeline behavior on the next poll/build.
 vault_needs_build() {
-    local path="$1"
-    [ -d "$path/_site" ] || return 0
+    local path="$1" want_base="${2:-}"
+    local marker="$path/.vk-staging/_build/.base_url"
+    local fp_marker="$path/.vk-staging/_build/.vk_fingerprint"
+    [ -d "$path/.vk-staging/_build/html" ] || return 0
+    if [ ! -f "$marker" ] || [ "$(cat "$marker" 2>/dev/null)" != "$want_base" ]; then
+        return 0
+    fi
+    if [ ! -f "$fp_marker" ] || [ "$(cat "$fp_marker" 2>/dev/null)" != "$VK_FINGERPRINT" ]; then
+        return 0
+    fi
     find "$path" -mindepth 1 \
-        \( -path "$path/_site" -o -path "$path/.quarto" -o -path "$path/site_libs" -o -path "$path/.git" \) -prune -o \
-        -type f -newer "$path/_site" -print -quit 2>/dev/null | grep -q .
+        \( -path "$path/.vk-staging" -o -path "$path/exports" -o -path "$path/.git" \) -prune -o \
+        -type f -newer "$path/.vk-staging/_build/html" -print -quit 2>/dev/null | grep -q .
 }
 
-# Helper: (re)generate the Vaults-root itself as a small quarto project
-# for 'vk serve-all' - its own _quarto.yml + index.md (fully re-derived
-# every call) plus a render of every top-level *.md page there
-# (imprint.md and any other global page the user drops in
-# $VAULTS_DIR - e.g. about.md, changelog.md - are all discovered and
-# rendered generically, not just imprint.md specifically). Also builds
-# (or rebuilds, on any source-file change - see vault_needs_build())
-# every real vault automatically, then refreshes the per-vault _site
-# symlinks - so the whole thing picks up *any* change (new/edited
-# notes, brand-new never-built vaults, removed vaults, global
-# pages/assets) with no manual 'vk build' step. Called once up front
-# and then repeatedly from serve-all's background watch loop (pass
-# quiet=1 there to suppress quarto's normally-verbose render log and
-# per-vault build failures on every poll).
+# Helper: run `myst build` for vault $1's staging tree with extra args
+# $3... (e.g. --html, or --typst for exports). MyST always fully
+# completes a non-watch build and exits on its own (verified: `myst
+# build --html` with no `--watch` writes the static site and returns) -
+# no special process-management is needed, unlike Quarto's old
+# preview-vs-render split for this particular case.
+#
+# $2 is the base-url to build with - "" for a standalone build served at
+# its own root (plain 'vk build'/'vk watch'), or "/<vault-name>" when
+# building for serve-all's nested "/<vault-name>/" path. MyST bakes the
+# base path into every emitted asset href/route at build time via the
+# BASE_URL env var (there is no --base-url build flag); the two outputs
+# are not interchangeable, so the chosen base-url is recorded in a
+# marker file that vault_needs_build() checks to force a rebuild on
+# mismatch (e.g. switching a vault between standalone use and
+# serve-all). The fingerprint marker is recorded alongside it for the
+# same function's staging-pipeline-version check.
+myst_build() {
+    local path="$1" base_url="$2"
+    shift 2
+    if [ -n "$base_url" ]; then
+        (cd "$path/.vk-staging" && BASE_URL="$base_url" "$MYST_BIN" build --ci "$@")
+    else
+        (cd "$path/.vk-staging" && "$MYST_BIN" build --ci "$@")
+    fi
+    mkdir -p "$path/.vk-staging/_build"
+    printf '%s' "$base_url" > "$path/.vk-staging/_build/.base_url"
+    printf '%s' "$VK_FINGERPRINT" > "$path/.vk-staging/_build/.vk_fingerprint"
+}
+
+# Helper: (re)generate one vault's own myst.yml at $1, titled $2. Shared
+# by 'new' (initial creation) and 'rename' (title needs updating after a
+# rename) so the project config is only ever written from one place.
+write_vault_myst_yml() {
+    local vault_path="$1" title="$2"
+    cat <<MYSTEOF > "$vault_path/myst.yml"
+version: 1
+project:
+  title: "$title"
+  toc:
+    - file: index.md
+    - title: Materials
+      children:
+        - pattern: materials/*.md
+    - title: Records
+      children:
+        - pattern: records/*.md
+    - title: Texts
+      children:
+        - pattern: texts/*.md
+site:
+  template: book-theme
+  options:
+    logo_text: "$title"
+MYSTEOF
+}
+
+# Helper: (re)generate the Vaults-root itself as a small MyST project for
+# 'vk serve-all' - its own myst.yml + index.md (fully re-derived every
+# call) plus a build of every top-level *.md page there (imprint.md and
+# any other global page the user drops in $VAULTS_DIR - e.g. about.md,
+# changelog.md - are all discovered and rendered generically, not just
+# imprint.md specifically). Also builds (or rebuilds, on any source-file
+# change - see vault_needs_build()) every real vault automatically, then
+# refreshes the per-vault _build/html symlinks - so the whole thing
+# picks up *any* change (new/edited notes, brand-new never-built vaults,
+# removed vaults, global pages/assets) with no manual 'vk build' step.
+# Called once up front and then repeatedly from serve-all's background
+# watch loop (pass quiet=1 there to suppress MyST's normally-verbose
+# build log and per-vault build failures on every poll).
 serve_all_rebuild() {
     local quiet="${1:-0}"
-    local name bn disp f path
+    local name bn disp f path tmp
 
     mkdir -p "$VAULTS_DIR/assets"
     if [ ! -f "$VAULTS_DIR/imprint.md" ]; then
         cp "$IMPRINT_MD_SRC" "$VAULTS_DIR/imprint.md"
     fi
 
-    # `resources: assets/**` copies $VAULTS_DIR/assets verbatim into
-    # _site/assets, regardless of whether every file in it is actually
-    # referenced from a rendered page.
-    cat <<QUARTOEOF > "$VAULTS_DIR/_quarto.yml"
-project:
-  type: website
-  output-dir: _site
-  resources:
-    - assets/**
+    # Same shared visual layer as every vault (see stage_vault()) -
+    # written directly here rather than through vault_enhance.py's merge
+    # since the hub's myst.yml is fully re-derived from scratch below on
+    # every call, not authored/preserved. Diff-guarded so an unchanged
+    # stylesheet never bumps its own mtime.
+    tmp="$VAULTS_DIR/assets/vk-managed.css.vk-tmp"
+    cp "$VK_THEME_CSS" "$tmp"
+    if ! cmp -s "$tmp" "$VAULTS_DIR/assets/vk-managed.css" 2>/dev/null; then
+        mv "$tmp" "$VAULTS_DIR/assets/vk-managed.css"
+    else
+        rm -f "$tmp"
+    fi
+    if [ ! -f "$VAULTS_DIR/assets/vk-logo.svg" ]; then
+        cp "$VK_LOGO_SVG" "$VAULTS_DIR/assets/vk-logo.svg"
+    fi
 
-website:
-  title: "Vaults"
-  search: true
-  page-footer:
-    right: "[Imprint](/imprint.html)"
-
-format:
-  html:
-    theme: cosmo
-    toc: false
-    code-fold: true
-QUARTOEOF
-
-    # Real vaults: subdirectories owning their own _quarto.yml.
+    # Real vaults: subdirectories owning their own myst.yml.
     # list_vaults() is already sorted alphabetically, so splitting it
     # below preserves that order without a separate sort pass.
     local all_vaults=()
@@ -474,47 +590,8 @@ QUARTOEOF
         [ -n "$name" ] && all_vaults+=("$name")
     done < <(list_vaults)
 
-    # Build (or rebuild, if any of its own source files changed since
-    # its last render) every real vault automatically. This is the
-    # step that makes serve-all's background loop pick up *any* change
-    # rather than just newly-appearing global pages/assets at the
-    # Vaults root - a note edit, a brand-new never-built vault, etc.
-    # all get (re)rendered on the next poll with no manual 'vk build'.
-    for name in "${all_vaults[@]}"; do
-        path="$VAULTS_DIR/$name"
-        # Regenerate category listings first (a note added/removed since
-        # the last poll counts as "a source file changed" too) - only
-        # actually rewrites index.md when content differs, so this alone
-        # never spuriously triggers vault_needs_build() below.
-        regen_category_indexes "$path"
-        # Keep filters/shortcodes current too (a vk.sh upgrade that adds
-        # or changes one should reach already-running vaults on the next
-        # poll, not just brand-new 'vk new' vaults) - cheap, unconditional
-        # file copies, so no mtime-guard needed here (unlike
-        # regen_category_indexes's cmp -s check above).
-        sync_vk_filters "$path"
-        if vault_needs_build "$path"; then
-            if [ "$quiet" = "1" ]; then
-                (cd "$path" && "$QUARTO_BIN" render >/dev/null 2>&1) || true
-            else
-                (cd "$path" && "$QUARTO_BIN" render >/dev/null) ||
-                    echo "⚠ Failed to build vault '$name' - see 'vk build $name' for details" >&2
-            fi
-        fi
-    done
-
-    BUILT=()
-    UNBUILT=()
-    for name in "${all_vaults[@]}"; do
-        if [ -d "$VAULTS_DIR/$name/_site" ]; then
-            BUILT+=("$name")
-        else
-            UNBUILT+=("$name")
-        fi
-    done
-
     # Every top-level *.md file except the generated index.md itself is
-    # a "global page" - rendered and linked from the root index, in
+    # a "global page" - built and linked from the root index, in
     # addition to imprint.md's dedicated footer link. Sorted
     # alphabetically like every other vk listing.
     GLOBAL_PAGES=()
@@ -528,15 +605,71 @@ QUARTOEOF
         mapfile -t GLOBAL_PAGES < <(printf '%s\n' "${GLOBAL_PAGES[@]}" | sort)
     fi
 
+    # toc: index.md first, then every discovered global page (imprint.md
+    # included generically, no special-casing beyond excluding index.md
+    # itself above).
+    {
+        echo 'version: 1'
+        echo 'project:'
+        echo '  title: "Vaults"'
+        echo '  toc:'
+        echo '    - file: index.md'
+        for bn in "${GLOBAL_PAGES[@]}"; do
+            echo "    - file: $bn"
+        done
+        echo 'site:'
+        echo '  template: book-theme'
+        echo '  options:'
+        echo '    logo_text: "Vaults"'
+        echo '    logo: assets/vk-logo.svg'
+        echo '    favicon: assets/vk-logo.svg'
+        echo '    style: assets/vk-managed.css'
+        echo '    folders: true'
+    } > "$VAULTS_DIR/myst.yml"
+
+    # Build (or rebuild, if any of its own source files changed since
+    # its last build) every real vault automatically. This is the step
+    # that makes serve-all's background loop pick up *any* change rather
+    # than just newly-appearing global pages/assets at the Vaults root -
+    # a note edit, a brand-new never-built vault, etc. all get
+    # (re)built on the next poll with no manual 'vk build' step.
+    for name in "${all_vaults[@]}"; do
+        path="$VAULTS_DIR/$name"
+        # Regenerate category listings first (a note added/removed since
+        # the last poll counts as "a source file changed" too) - only
+        # actually rewrites index.md when content differs, so this alone
+        # never spuriously triggers vault_needs_build() below.
+        regen_category_indexes "$path"
+        if vault_needs_build "$path" "/$name"; then
+            stage_vault "$path"
+            if [ "$quiet" = "1" ]; then
+                myst_build "$path" "/$name" --html >/dev/null 2>&1 || true
+            else
+                myst_build "$path" "/$name" --html >/dev/null ||
+                    echo "⚠ Failed to build vault '$name' - see 'vk build $name' for details" >&2
+            fi
+        fi
+    done
+
+    BUILT=()
+    UNBUILT=()
+    for name in "${all_vaults[@]}"; do
+        if [ -d "$VAULTS_DIR/$name/.vk-staging/_build/html" ]; then
+            BUILT+=("$name")
+        else
+            UNBUILT+=("$name")
+        fi
+    done
+
     {
         echo '---'
         echo 'title: "Vaults"'
         echo '---'
         echo
         # No body heading here - front matter's "title" above already
-        # renders as the page header via quarto's title block.
+        # renders as the page header.
         for name in "${BUILT[@]}"; do
-            echo "- [$name](/$name/)"
+            echo "- [$name](/$(url_encode_path "$name")/)"
         done
         if [ "${#UNBUILT[@]}" -gt 0 ]; then
             echo
@@ -555,30 +688,26 @@ QUARTOEOF
             for bn in "${GLOBAL_PAGES[@]}"; do
                 disp="${bn%.md}"
                 disp="${disp//_/ }"
-                echo "- [$disp](/${bn%.md}.html)"
+                echo "- [$disp](/$(url_encode_path "${bn%.md}")/)"
             done
         fi
     } > "$VAULTS_DIR/index.md"
 
     if [ "$quiet" = "1" ]; then
-        (cd "$VAULTS_DIR" && "$QUARTO_BIN" render index.md >/dev/null 2>&1) || true
-        for bn in "${GLOBAL_PAGES[@]}"; do
-            (cd "$VAULTS_DIR" && "$QUARTO_BIN" render "$bn" >/dev/null 2>&1) || true
-        done
+        (cd "$VAULTS_DIR" && "$MYST_BIN" build --ci --html >/dev/null 2>&1) || true
     else
-        (cd "$VAULTS_DIR" && "$QUARTO_BIN" render index.md >/dev/null)
-        for bn in "${GLOBAL_PAGES[@]}"; do
-            (cd "$VAULTS_DIR" && "$QUARTO_BIN" render "$bn" >/dev/null)
-        done
+        (cd "$VAULTS_DIR" && "$MYST_BIN" build --ci --html >/dev/null)
     fi
 
-    # Symlink each built vault's _site into the just-rendered root
-    # _site, named after the vault itself (so "/<vault-name>/" serves it
-    # directly, no /_site suffix needed) - drop any stale symlinks first
-    # (e.g. a vault renamed/removed since the last rebuild).
-    find "$VAULTS_DIR/_site" -maxdepth 1 -type l -delete
+    # Symlink each built vault's staged _build/html into the just-built
+    # root _build/html, named after the vault itself (so "/<vault-name>/"
+    # serves it directly, no extra path segment needed) - drop any stale
+    # symlinks first (e.g. a vault renamed/removed since the last
+    # rebuild).
+    mkdir -p "$VAULTS_DIR/_build/html"
+    find "$VAULTS_DIR/_build/html" -maxdepth 1 -type l -delete
     for name in "${BUILT[@]}"; do
-        ln -s "$VAULTS_DIR/$name/_site" "$VAULTS_DIR/_site/$name"
+        ln -s "$VAULTS_DIR/$name/.vk-staging/_build/html" "$VAULTS_DIR/_build/html/$name"
     done
 
     if [ "$quiet" != "1" ] && [ "${#UNBUILT[@]}" -gt 0 ]; then
@@ -598,9 +727,16 @@ Usage:
   vk search [vault|all]                     Substring-search one vault, or every vault at once
   vk rename [old] [new]                     Rename a vault (dir + baked-in title strings)
   vk watch [vault] [-p|--port PORT] [-b|--bind ADDR] [-0|--public]
-                                             Live Quarto preview + dufs server
-  vk build [vault] [file PATH] [-p|--port PORT] [-b|--bind ADDR] [-0|--public]
-                                             Render the vault (or a single file) with Quarto
+                                             Live MyST preview + dufs server
+  vk build [vault] [-p|--port PORT] [-b|--bind ADDR] [-0|--public]
+                                             Build the vault's static HTML site with MyST
+  vk export [vault] [file] [--format pdf|typst]
+                                             Export one note (or the whole vault's exports:
+                                             frontmatter) to a PDF or Typst bundle
+  vk check [vault|all] [--external]         Validate a vault (or every vault): strict MyST build
+                                             + static checks (frontmatter, links, assets,
+                                             directives, Graphviz DOT). --external also checks
+                                             external links resolve (slower, needs network)
   vk serve-all [-p|--port PORT] [-b|--bind ADDR] [-0|--public]
                                              Host all vaults at once: / lists them, /<vault> serves it
   vk help | -h | --help                     Show this message
@@ -629,80 +765,46 @@ case "${1:-}" in
             echo "Error: Vault already exists." && exit 1
         fi
 
-        mkdir -p "$VAULT_PATH"/{texts,materials,records,_extensions,assets}
+        mkdir -p "$VAULT_PATH"/{texts,materials,records,assets}
         ensure_main_md "$VAULT_PATH"
+        touch "$VAULT_PATH/references.bib"
 
         # 1. Generate Base Index Configuration (categories listed
         # alphabetically, like every other listing in vk). The landing
         # page starts with main.md's hand-edited content (included live
-        # via quarto's shortcode, so later edits to main.md show up
-        # without regenerating index.md), followed by the one-link-per-
-        # category list.
+        # via MyST's native {include} directive, so later edits to
+        # main.md show up without regenerating index.md), followed by
+        # the one-link-per-category list (plain MyST/CommonMark links,
+        # not wikilinks - MyST doesn't support that syntax).
         cat <<NOTEEOF > "$VAULT_PATH/index.md"
 ---
 title: "$VAULT_NAME"
 ---
-{{< include main.md >}}
 
-- [[materials/index.md|Materials]]
-- [[records/index.md|Records]]
-- [[texts/index.md|Texts]]
+:::{include} main.md
+:::
+
+- [Materials](materials/index.md)
+- [Records](records/index.md)
+- [Texts](texts/index.md)
 NOTEEOF
         touch "$VAULT_PATH/texts/index.md" "$VAULT_PATH/materials/index.md" "$VAULT_PATH/records/index.md"
 
-        # 2. Generate Quarto Config (sidebar sections alphabetical too).
-        # page-footer's Imprint link is an absolute path - it only
-        # resolves when this vault is reached through 'vk serve-all'
-        # (which also renders the Vaults-root project's own imprint.md
-        # at that same absolute path), not when a vault's _site is
-        # opened standalone. `resources: assets/**` copies the vault's
-        # own assets/ dir into _site verbatim regardless of whether
-        # every file in it happens to be referenced from a page.
-        cat <<QUARTOEOF > "$VAULT_PATH/_quarto.yml"
-project:
-  type: website
-  output-dir: _site
-  resources:
-    - assets/**
+        # 2. Generate MyST project config (toc sections alphabetical
+        # too, shared with 'rename' via write_vault_myst_yml()).
+        write_vault_myst_yml "$VAULT_PATH" "$VAULT_NAME"
 
-website:
-  title: "$VAULT_NAME"
-  search: true
-  sidebar:
-    style: "docked"
-    search: true
-    contents:
-      - index.md
-      - section: "Materials"
-        contents: "materials/*.md"
-      - section: "Records"
-        contents: "records/*.md"
-      - section: "Texts"
-        contents: "texts/*.md"
-  page-footer:
-    right: "[Imprint](/imprint.html)"
-
-format:
-  html:
-    theme: cosmo
-    toc: true
-    toc-location: right
-    code-fold: true
-    filters:
-QUARTOEOF
-
-        # 3. Install every vk-managed filter/shortcode (shared, static -
-        # not regenerated per-vault from a heredoc, so every vault always
-        # gets the exact same, already-tested set - see sync_vk_filters()
-        # for how the plain-filter/shortcode-extension distinction works
-        # and how it back-fills format.html.filters: above), and seed a
-        # per-vault Imprint stub (only written once, at vault creation -
-        # never overwritten by vk afterwards, since it's meant to be
-        # hand-edited).
-        sync_vk_filters "$VAULT_PATH"
+        # 3. Seed a per-vault Imprint stub (only written once, at vault
+        # creation - never overwritten by vk afterwards, since it's
+        # meant to be hand-edited).
         cp "$IMPRINT_MD_SRC" "$VAULT_PATH/imprint.md"
 
-        (cd "$VAULT_PATH" && "$GIT_BIN" init -q && echo "_site/" > .gitignore && "$GIT_BIN" add . && "$GIT_BIN" commit -q -m "Init vault")
+        cat <<GITIGNOREEOF > "$VAULT_PATH/.gitignore"
+.vk-staging/
+exports/
+GITIGNOREEOF
+
+        (cd "$VAULT_PATH" && "$GIT_BIN" init -q && "$GIT_BIN" add . && "$GIT_BIN" commit -q -m "Init vault")
         echo "✓ Vault initialized successfully at $VAULT_PATH"
         ;;
 
@@ -710,7 +812,7 @@ QUARTOEOF
         VAULT_NAME=$(get_vault "${2:-}")
         cd_vault "$VAULT_NAME"
 
-        ACTION=$("$GUM_BIN" choose "Create Note" "Edit Note" "Delete Note" "Fuzzy Search Text")
+        ACTION=$("$GUM_BIN" choose "Create Note" "Edit Note" "Rename/Move File" "Delete Note" "Fuzzy Search Text")
 
         case "$ACTION" in
             "Create Note")
@@ -722,15 +824,32 @@ QUARTOEOF
                 ;;
 
             "Edit Note")
-                FILE=$(find . -name "*.md" ! -path "./_site/*" | "$GUM_BIN" filter --placeholder "Select note to edit...")
+                FILE=$(find . -name "*.md" ! -path "./.vk-staging/*" | "$GUM_BIN" filter --placeholder "Select note to edit...")
                 if [ -z "$FILE" ]; then exit 1; fi
                 "$HX_BIN" "$FILE"
                 ;;
 
             "Delete Note")
-                FILE=$(find . -name "*.md" ! -path "./_site/*" | "$GUM_BIN" filter --placeholder "Select note to DESTROY...")
+                FILE=$(find . -name "*.md" ! -path "./.vk-staging/*" | "$GUM_BIN" filter --placeholder "Select note to DESTROY...")
                 if [ -z "$FILE" ]; then exit 1; fi
                 "$GUM_BIN" confirm "Are you sure you want to permanently delete $FILE?" && rm "$FILE" && echo "Deleted."
+                ;;
+
+            "Rename/Move File")
+                # Conceptually a plain file move: for a note (.md),
+                # preserves the stable id (added as an alias on the
+                # note itself); for any other file (an asset - image,
+                # PDF, ...) just moves it. Either way, exact Markdown/
+                # image/{doc} references to it are rewritten across
+                # this vault *and* any sibling vaults under the same
+                # $VAULTS_DIR - see scripts/note_rename.py's own
+                # docstring for exactly what is (and isn't) rewritten.
+                FILE=$(find . \( -name "*.md" -o -path "./assets/*" \) ! -path "./.vk-staging/*" -type f | "$GUM_BIN" filter --placeholder "Select file to rename/move...")
+                if [ -z "$FILE" ]; then exit 1; fi
+                OLD_REL="${FILE#./}"
+                NEW_REL=$("$GUM_BIN" input --placeholder "New path (relative to vault root, e.g. materials/new-name.md)..." --value "$OLD_REL")
+                if [ -z "$NEW_REL" ] || [ "$NEW_REL" = "$OLD_REL" ]; then exit 1; fi
+                "$PYTHON_BIN" "$VK_NOTE_RENAME" "$PWD" "$OLD_REL" "$NEW_REL"
                 ;;
 
             "Fuzzy Search Text")
@@ -822,17 +941,31 @@ $CONTENT
                 ENTRY=$("$GUM_BIN" write --header "Paste BibTeX entry...")
                 if [ -z "$ENTRY" ]; then exit 1; fi
                 # Citekey (e.g. "@article{smith2024foo," -> "smith2024foo")
-                # is only used as the default note filename here - the
-                # formatted citation itself is built field-by-field, see
-                # format_bib_entry().
+                # both keys references.bib (so MyST/pandoc can resolve
+                # native `[@citekey]` citations) and is used as the
+                # default note filename.
                 CITEKEY=$(echo "$ENTRY" | "$RG_BIN" -o -N '^@\w+\{([^,]+),' -r '$1' | head -1)
-                FORMATTED=$(format_bib_entry "$ENTRY")
+                if [ -z "$CITEKEY" ]; then
+                    echo "Error: could not parse a citation key from the pasted BibTeX entry (expected '@type{citekey, ...}')." >&2
+                    exit 1
+                fi
+                if [ -f "references.bib" ] && "$RG_BIN" -q -N "^@\w+\{$(printf '%s' "$CITEKEY" | sed 's/[.[\*^$/]/\\&/g'),\s*\$" "references.bib"; then
+                    echo "Error: citation key '$CITEKEY' already exists in references.bib - use a different key or edit the existing entry directly." >&2
+                    exit 1
+                fi
+                # Append (creating references.bib if this is the first
+                # entry - older vaults created before 'vk new' started
+                # seeding an empty one won't have it yet).
+                {
+                    [ -s "references.bib" ] && printf '\n'
+                    printf '%s\n' "$ENTRY"
+                } >> "references.bib"
                 TITLE=$("$GUM_BIN" input --placeholder "Note filename..." --value "$CITEKEY")
                 if [ -z "$TITLE" ]; then exit 1; fi
                 prompt_category_type
                 write_note "$CAT" "$TYPE" "$TITLE" <<< "# ${TITLE//_/ }
 
-$FORMATTED
+[@$CITEKEY]
 
 \`\`\`bibtex
 $ENTRY
@@ -940,15 +1073,15 @@ $META_BLOCK"
         # recognize the vault under its new name, .git history included.
         mv "$OLD_PATH" "$NEW_PATH"
 
-        # index.md's title and _quarto.yml's website.title are baked in
-        # verbatim at 'vk new' time and never re-derived afterwards - a
-        # bare mv would otherwise leave the rendered site/index still
-        # showing the old name.
+        # index.md's title and myst.yml's project.title/site.options.
+        # logo_text are baked in verbatim at 'vk new' time and never
+        # re-derived afterwards - a bare mv would otherwise leave the
+        # built site/index still showing the old name.
         if [ -f "$NEW_PATH/index.md" ]; then
             sed -i "s/^title: \".*\"/title: \"$NEW_NAME\"/" "$NEW_PATH/index.md"
         fi
-        if [ -f "$NEW_PATH/_quarto.yml" ]; then
-            sed -i "s/^  title: \".*\"/  title: \"$NEW_NAME\"/" "$NEW_PATH/_quarto.yml"
+        if [ -f "$NEW_PATH/myst.yml" ]; then
+            write_vault_myst_yml "$NEW_PATH" "$NEW_NAME"
         fi
 
         if [ -d "$NEW_PATH/.git" ]; then
@@ -962,16 +1095,47 @@ $META_BLOCK"
         parse_serve_flags "$@"
         VAULT_NAME=$(get_vault "${POSITIONAL[0]:-}")
         cd_vault "$VAULT_NAME"
-        build_dufs_args
-        echo "👀 Starting hot-reloading Quarto pipeline..."
-        "$QUARTO_BIN" preview --no-serve --no-browser &
-        Q_PID=$!
-        # Bind the background Quarto watcher to this shell's lifetime -
-        # prevents orphaned processes holding the preview port across
-        # subsequent 'vk watch' restarts.
-        trap 'kill "$Q_PID" 2>/dev/null || true' EXIT
-        echo "⚡ Dufs web interface running at $(dufs_url)"
-        "$DUFS_BIN" _site --render-index -A "${DUFS_ARGS[@]}"
+        stage_vault "$PWD"
+
+        # `myst build --html --watch` does NOT actually watch/rebuild on
+        # change (MyST itself prints "Site content will not be watched
+        # and updated; use 'myst start' instead" - confirmed live) - so
+        # watch mode uses MyST's own dev server instead of dufs. That
+        # server needs two ports (an app server the browser talks to,
+        # plus an internal content server) to get real live-reload;
+        # `--headless` (content-server only) serves stale content after
+        # an edit even though the rebuild itself does happen on disk -
+        # confirmed live, not used here. The content server just needs
+        # *a* free port of its own, never exposed/documented to the
+        # user, so PORT+1 is fine.
+        #
+        # `HOST` (not a CLI flag) is what actually controls the bind
+        # address - it's forced to localhost unless `--keep-host` is
+        # also passed, which is why both are set here together (mirrors
+        # dufs' own loopback-by-default/--bind-to-open-up contract).
+        CONTENT_PORT=$((PORT + 1))
+        echo "👀 Starting MyST's own dev server (hot-reloading)..."
+
+        # Re-stage on every source-file change so edits to the vault's
+        # real notes (not the staging copy MyST's dev server actually
+        # watches) show up live - stage_vault()'s own cmp -s guards keep
+        # this from ever writing a file (and thus triggering a rebuild)
+        # that hasn't actually changed.
+        (
+            while true; do
+                sleep 1
+                stage_vault "$PWD" 2>/dev/null || true
+            done
+        ) &
+        RESTAGE_PID=$!
+        # Bind both the background MyST server and the restage loop to
+        # this shell's lifetime - prevents orphaned processes holding the
+        # preview port across subsequent 'vk watch' restarts.
+        trap 'kill "$RESTAGE_PID" 2>/dev/null || true; kill "$MYST_PID" 2>/dev/null || true' EXIT
+        echo "⚡ MyST dev server running at http://${BIND}:${PORT}"
+        (cd "$PWD/.vk-staging" && HOST="$BIND" "$MYST_BIN" start --keep-host --port "$PORT" --server-port "$CONTENT_PORT") &
+        MYST_PID=$!
+        wait "$MYST_PID"
         ;;
 
     build)
@@ -979,10 +1143,194 @@ $META_BLOCK"
         parse_serve_flags "$@"
         VAULT_NAME=$(get_vault "${POSITIONAL[0]:-}")
         cd_vault "$VAULT_NAME"
-        if [ "${POSITIONAL[1]:-}" = "file" ] && [ -n "${POSITIONAL[2]:-}" ]; then
-            "$QUARTO_BIN" render "${POSITIONAL[2]}"
+        stage_vault "$PWD"
+        myst_build "$PWD" "" --html
+        echo "✓ Built $VAULT_NAME at $PWD/.vk-staging/_build/html"
+        ;;
+
+    export)
+        shift
+        VAULT_NAME=""
+        FILE=""
+        FORMAT="pdf"
+        POSITIONAL=()
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --format)
+                    FORMAT="${2:?--format requires a value (pdf or typst)}"
+                    shift 2
+                    ;;
+                --format=*)
+                    FORMAT="${1#*=}"
+                    shift
+                    ;;
+                *)
+                    POSITIONAL+=("$1")
+                    shift
+                    ;;
+            esac
+        done
+        case "$FORMAT" in
+            pdf|typst) ;;
+            *)
+                echo "Error: --format must be 'pdf' or 'typst' (got '$FORMAT')." >&2
+                exit 1
+                ;;
+        esac
+
+        VAULT_NAME=$(get_vault "${POSITIONAL[0]:-}")
+        cd_vault "$VAULT_NAME"
+
+        FILE="${POSITIONAL[1]:-}"
+        if [ -z "$FILE" ]; then
+            FILE=$(find . -name "*.md" ! -path "./.vk-staging/*" | "$GUM_BIN" filter --placeholder "Select note to export...")
+        fi
+        if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
+            echo "Error: no such note '$FILE'." >&2
+            exit 1
+        fi
+
+        stage_vault "$PWD"
+        STAGED_FILE=".vk-staging/${FILE#./}"
+
+        # MyST slugifies the export's output basename from the note's
+        # title/filename (e.g. "with_tasks.md" -> "with-tasks.pdf") using
+        # rules not worth replicating here, so BASE (the source file's own
+        # basename) can't be trusted to name-match the produced files.
+        # Instead, mark the wall-clock time just before forcing the build,
+        # then afterwards pick whichever .pdf/.typ under MyST's own output
+        # dirs is newer than that mark - reliable since --force triggers
+        # exactly one export per invocation.
+        BASE=$(basename "$FILE" .md)
+        MARK_FILE=$(mktemp)
+
+        # `--force` builds a Typst export even when the note has no
+        # `exports:` frontmatter of its own - vk's own design keeps
+        # exports opt-in for authored notes, while still letting this
+        # command force one on demand without editing the source note.
+        (cd "$PWD/.vk-staging" && "$MYST_BIN" build --ci --force --typst "${STAGED_FILE#.vk-staging/}")
+
+        mkdir -p "$PWD/exports"
+        PDF_SRC=$(find "$PWD/.vk-staging/_build/exports" -type f -name '*.pdf' -newer "$MARK_FILE" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+        rm -f "$MARK_FILE"
+        if [ -z "$PDF_SRC" ]; then
+            echo "Error: MyST did not produce a PDF for '$FILE' - check the build output above." >&2
+            exit 1
+        fi
+        cp "$PDF_SRC" "$PWD/exports/${BASE}.pdf"
+
+        if [ "$FORMAT" = "typst" ]; then
+            # The raw Typst bundle (.typ sources) lives under MyST's own
+            # temp working dir rather than _build/exports - copy it
+            # alongside the PDF so 'typst' format preserves the editable
+            # source, not just the compiled PDF.
+            TYP_DIR=$(find "$PWD/.vk-staging/_build/temp" -type f -name '*.typ' -newer "$PDF_SRC" -printf '%T@ %h\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- || true)
+            [ -z "$TYP_DIR" ] && TYP_DIR=$(find "$PWD/.vk-staging/_build/temp" -type f -name '*.typ' -printf '%T@ %h\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- || true)
+            if [ -n "$TYP_DIR" ]; then
+                mkdir -p "$PWD/exports/${BASE}_typst"
+                cp -r "$TYP_DIR/." "$PWD/exports/${BASE}_typst/"
+                cp "$PDF_SRC" "$PWD/exports/${BASE}_typst/${BASE}.pdf"
+            fi
+        fi
+
+        echo "✓ Exported $VAULT_NAME/$FILE to $PWD/exports/${BASE}.pdf"
+        ;;
+
+    check)
+        shift
+        EXTERNAL=0
+        POSITIONAL=()
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --external) EXTERNAL=1; shift ;;
+                *) POSITIONAL+=("$1"); shift ;;
+            esac
+        done
+        TARGET="${POSITIONAL[0]:-}"
+        if [ -z "$TARGET" ]; then
+            VAULTS_LIST=$(list_vaults)
+            if [ -n "$VAULTS_LIST" ]; then
+                TARGET=$( { echo "All vaults"; echo "$VAULTS_LIST"; } | "$GUM_BIN" choose --header "Check scope:")
+            else
+                echo "No vaults found." >&2
+                exit 1
+            fi
+        fi
+        if [ "$TARGET" = "All vaults" ] || [ "$TARGET" = "all" ] || [ "$TARGET" = "--all" ]; then
+            CHECK_VAULTS=$(list_vaults)
         else
-            "$QUARTO_BIN" render
+            CHECK_VAULTS="$TARGET"
+        fi
+        if [ -z "$CHECK_VAULTS" ]; then
+            echo "No vaults found." >&2
+            exit 1
+        fi
+
+        OVERALL_OK=1
+        while IFS= read -r VNAME; do
+            [ -z "$VNAME" ] && continue
+            VPATH="$VAULTS_DIR/$VNAME"
+            if [ ! -d "$VPATH" ]; then
+                echo "✗ vault '$VNAME' does not exist at $VPATH." >&2
+                OVERALL_OK=0
+                continue
+            fi
+            echo "── Checking $VNAME ──"
+            stage_vault "$VPATH"
+
+            # 'check' only cares whether the build succeeds/fails, not
+            # its output - but a plain `myst build --html` here writes
+            # straight into ".vk-staging/_build", the same tree
+            # myst_build()/vault_needs_build() track via ".base_url"/
+            # ".vk_fingerprint" markers for build/watch/serve-all. Since
+            # this build (unlike myst_build()) never sets BASE_URL or
+            # updates those markers, running 'vk check' on a vault
+            # currently served nested under serve-all (BASE_URL=
+            # "/<vault-name>") would silently overwrite its cached build
+            # with a standalone one while leaving the stale markers
+            # claiming a match - serve-all would then keep serving the
+            # now-broken build until some unrelated source file change
+            # forced a real rebuild. Back up and restore "_build" around
+            # the check so it never has a side effect on the cache.
+            BUILD_DIR="$VPATH/.vk-staging/_build"
+            BUILD_BACKUP=""
+            if [ -d "$BUILD_DIR" ]; then
+                BUILD_BACKUP=$(mktemp -d)
+                mv "$BUILD_DIR" "$BUILD_BACKUP/_build"
+            fi
+
+            BUILD_ARGS=(--strict --html)
+            [ "$EXTERNAL" = "1" ] && BUILD_ARGS+=(--check-links)
+            if (cd "$VPATH/.vk-staging" && "$MYST_BIN" build --ci "${BUILD_ARGS[@]}"); then
+                echo "✓ $VNAME: myst build passed"
+            else
+                echo "✗ $VNAME: myst build FAILED" >&2
+                OVERALL_OK=0
+            fi
+
+            rm -rf "$BUILD_DIR"
+            if [ -n "$BUILD_BACKUP" ]; then
+                mv "$BUILD_BACKUP/_build" "$BUILD_DIR"
+                rmdir "$BUILD_BACKUP" 2>/dev/null || true
+            fi
+
+            if "$PYTHON_BIN" "$VK_VAULT_CHECK" "$VPATH/.vk-staging" \
+                --dot "$GRAPHVIZ_DOT_BIN" --neato "$GRAPHVIZ_NEATO_BIN" \
+                --fdp "$GRAPHVIZ_FDP_BIN" --sfdp "$GRAPHVIZ_SFDP_BIN" \
+                --circo "$GRAPHVIZ_CIRCO_BIN" --twopi "$GRAPHVIZ_TWOPI_BIN"; then
+                echo "✓ $VNAME: static checks passed"
+            else
+                echo "✗ $VNAME: static checks FAILED" >&2
+                OVERALL_OK=0
+            fi
+        done <<< "$CHECK_VAULTS"
+
+        if [ "$OVERALL_OK" = "1" ]; then
+            echo "✓ All checks passed."
+            exit 0
+        else
+            echo "✗ One or more checks failed - see above." >&2
+            exit 1
         fi
         ;;
 
@@ -1004,7 +1352,7 @@ $META_BLOCK"
 
         echo "⚡ Active multi-vault core instance running at $(dufs_url)"
         echo "Access paths via: $(dufs_url)/<vault-name>/"
-        "$DUFS_BIN" "$VAULTS_DIR/_site" --render-index --allow-symlink -A "${DUFS_ARGS[@]}"
+        "$DUFS_BIN" "$VAULTS_DIR/_build/html" --render-index --allow-symlink -A "${DUFS_ARGS[@]}"
         ;;
 
     *)
@@ -1014,7 +1362,7 @@ $META_BLOCK"
             exit 1
         fi
         echo "Interactive CLI Management Hub"
-        ACTION=$("$GUM_BIN" choose "new (Create Vault)" "note (CRUD Operations)" "search (Find Across Vaults)" "rename (Rename Vault)" "watch (Live Edit Preview)" "serve-all (Host Hub)")
+        ACTION=$("$GUM_BIN" choose "new (Create Vault)" "note (CRUD Operations)" "search (Find Across Vaults)" "rename (Rename Vault)" "check (Validate Vault)" "watch (Live Edit Preview)" "serve-all (Host Hub)")
         CMD=$(echo "$ACTION" | cut -d' ' -f1)
         exec "$0" "$CMD"
         ;;

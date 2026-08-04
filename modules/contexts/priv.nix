@@ -76,7 +76,7 @@ in {
       prettier = true;
   };
 
-  # suites.dtp-tools.quarto now defaults true whenever the suite itself
+  # suites.dtp-tools.mystmd now defaults true whenever the suite itself
   # is enabled (modules/suites/dtp-tools.nix) - no longer needs stating
   # here.
 

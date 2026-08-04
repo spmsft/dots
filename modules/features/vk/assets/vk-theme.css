@@ -1,0 +1,263 @@
+/* vk shared style layer - Tokyo Night + restrained solarpunk accents.
+ *
+ * Injected into every vault's staged build via `site.options.style`
+ * (see vault_enhance.py's merge_myst_config() and stage_vault() in
+ * vk.sh) - this file itself is never copied into an authored vault and
+ * is never edited by hand inside `.vk-staging`; it always comes from
+ * this managed Nix store path. A vault can add its own
+ * `assets/vk-custom.css`, which stage_vault() appends *after* this
+ * file in the staged bundle, so vault-specific rules win on selector
+ * ties without ever needing to fork or edit this file.
+ *
+ * Targets only the stable `myst-*`/`article`/`content` class names the
+ * bundled `book-theme` actually emits (verified against a real MyST
+ * 1.9.1 build's static HTML - see memory-bank/decisions.md) plus plain
+ * semantic HTML elements - never the Tailwind utility classes
+ * (`bg-white`, `dark:bg-stone-900`, ...) also present on those same
+ * elements, since those are implementation details of the theme's own
+ * build and are not a stable contract to select against.
+ *
+ * Both palettes are expressed as CSS custom properties so every rule
+ * below only has to be written once; `html.dark` (the class the theme
+ * itself toggles - see myst-tabulator's own dark-mode notes for
+ * precedent) swaps the palette, not the rules.
+ */
+
+:root {
+  /* Solarpunk-tinted light mode: warm paper background, deep green/teal
+     ink and accents rather than book-theme's stock blue-gray. */
+  --vk-bg: #f4f3ee;
+  --vk-bg-raised: #ffffff;
+  --vk-fg: #2b2f38;
+  --vk-fg-muted: #5b6472;
+  --vk-border: #d8d3c4;
+  --vk-accent: #2f8f6e;
+  --vk-accent-strong: #1f6b50;
+  --vk-link: #1f6b8f;
+  --vk-code-bg: #eae7da;
+  --vk-note: #2f8f6e;
+  --vk-warning: #b8860b;
+  --vk-danger: #b3413a;
+  --vk-tip: #3f7cac;
+}
+
+html.dark {
+  /* Tokyo Night proper, with the same green/cyan accents carried over
+     from light mode so the two palettes read as one identity rather
+     than two unrelated themes. */
+  --vk-bg: #1a1b26;
+  --vk-bg-raised: #24283b;
+  --vk-fg: #c0caf5;
+  --vk-fg-muted: #9aa5ce;
+  --vk-border: #2a2e42;
+  --vk-accent: #9ece6a;
+  --vk-accent-strong: #73daca;
+  --vk-link: #7dcfff;
+  --vk-code-bg: #1f2335;
+  --vk-note: #7aa2f7;
+  --vk-warning: #e0af68;
+  --vk-danger: #f7768e;
+  --vk-tip: #73daca;
+}
+
+body {
+  background-color: var(--vk-bg);
+  color: var(--vk-fg);
+}
+
+/* Top navigation + primary sidebar chrome. */
+.myst-top-nav,
+.myst-primary-sidebar {
+  background-color: var(--vk-bg-raised) !important;
+  border-color: var(--vk-border) !important;
+}
+
+.myst-home-link,
+.myst-toc-item a {
+  color: var(--vk-fg) !important;
+}
+
+.myst-toc-item[aria-current="page"] > a,
+.myst-toc-item a:hover {
+  color: var(--vk-accent-strong) !important;
+}
+
+.myst-search-bar {
+  background-color: var(--vk-bg) !important;
+  border-color: var(--vk-border) !important;
+}
+
+.myst-theme-sun-icon,
+.myst-theme-moon-icon {
+  color: var(--vk-accent) !important;
+}
+
+/* Article body: a touch narrower than the theme default for
+   readability, with a calmer heading rhythm than the stock tight
+   Tailwind prose spacing. */
+.article.content {
+  max-width: 74ch;
+}
+
+.article.content h1,
+.article.content h2,
+.article.content h3 {
+  color: var(--vk-fg);
+  border-bottom: 1px solid var(--vk-border);
+  padding-bottom: 0.2em;
+}
+
+.article.content h1 { margin-top: 0.4em; }
+.article.content h2 { margin-top: 1.8em; }
+.article.content h3 { margin-top: 1.4em; border-bottom: none; }
+
+.article.content a {
+  color: var(--vk-link);
+  text-decoration-thickness: from-font;
+}
+
+.article.content a:hover {
+  color: var(--vk-accent-strong);
+}
+
+/* Code blocks + inline code. */
+.myst-code {
+  background-color: var(--vk-code-bg) !important;
+  border: 1px solid var(--vk-border);
+  border-radius: 0.5rem;
+}
+
+.article.content code {
+  background-color: var(--vk-code-bg);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.3em;
+}
+
+.article.content pre code {
+  background-color: transparent;
+  padding: 0;
+}
+
+/* Admonitions: color-coded by kind, matching MyST's own note/warning/
+   tip/danger vocabulary rather than inventing a new one. */
+.myst-admonition {
+  border-radius: 0.5rem;
+  border: 1px solid var(--vk-border);
+  background-color: var(--vk-bg-raised);
+}
+
+.myst-admonition-header {
+  font-weight: 600;
+}
+
+.myst-admonition-note .myst-admonition-header,
+.myst-admonition-note .myst-admonition-header-icon {
+  color: var(--vk-note);
+}
+
+.myst-admonition-warning .myst-admonition-header,
+.myst-admonition-warning .myst-admonition-header-icon,
+.myst-admonition-caution .myst-admonition-header,
+.myst-admonition-caution .myst-admonition-header-icon {
+  color: var(--vk-warning);
+}
+
+.myst-admonition-danger .myst-admonition-header,
+.myst-admonition-danger .myst-admonition-header-icon,
+.myst-admonition-error .myst-admonition-header,
+.myst-admonition-error .myst-admonition-header-icon {
+  color: var(--vk-danger);
+}
+
+.myst-admonition-tip .myst-admonition-header,
+.myst-admonition-tip .myst-admonition-header-icon,
+.myst-admonition-hint .myst-admonition-header,
+.myst-admonition-hint .myst-admonition-header-icon {
+  color: var(--vk-tip);
+}
+
+/* Tables - including Taskwarrior's generated tables (see
+   filters/taskwarrior.lua), which are plain MyST tables by the time
+   they reach the renderer, so no dedicated selector is needed for
+   them. Wrapped in a horizontally scrollable block on narrow/mobile
+   viewports rather than letting a wide table blow out the layout. */
+.article.content table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.article.content th,
+.article.content td {
+  border: 1px solid var(--vk-border);
+  padding: 0.4em 0.7em;
+}
+
+.article.content th {
+  background-color: var(--vk-bg-raised);
+  color: var(--vk-accent-strong);
+}
+
+@media (max-width: 640px) {
+  .article.content table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}
+
+/* Blockquotes. */
+.article.content blockquote {
+  border-left: 3px solid var(--vk-accent);
+  color: var(--vk-fg-muted);
+  padding-left: 1em;
+}
+
+/* Tag chips (see vault_enhance.py's generated tag-chip markup). Kept
+   deliberately simple - a rounded pill linking to that tag's generated
+   `explore/tags/<tag>.md` index page. */
+.vk-tag-chip {
+  display: inline-block;
+  font-size: 0.8em;
+  padding: 0.1em 0.6em;
+  margin: 0 0.3em 0.3em 0;
+  border-radius: 999px;
+  background-color: var(--vk-code-bg);
+  border: 1px solid var(--vk-border);
+  color: var(--vk-accent-strong) !important;
+  text-decoration: none !important;
+}
+
+.vk-tag-chip:hover {
+  background-color: var(--vk-accent);
+  color: var(--vk-bg-raised) !important;
+}
+
+/* Category/type accents on generated listing/index pages - a slim
+   left border, colored per section, so materials/records/texts (and
+   the generated explore/ pages) stay visually distinct without a full
+   per-category theme fork. */
+.vk-kind-materials { border-left: 3px solid var(--vk-tip); padding-left: 0.6em; }
+.vk-kind-records   { border-left: 3px solid var(--vk-accent); padding-left: 0.6em; }
+.vk-kind-texts     { border-left: 3px solid var(--vk-note); padding-left: 0.6em; }
+
+/* Print: keep notes, tables, callouts, and code usable on paper/PDF;
+   drop navigation chrome that has no meaning on a printed page. */
+@media print {
+  .myst-top-nav,
+  .myst-primary-sidebar,
+  .myst-search-bar,
+  .myst-toc,
+  .myst-made-with-myst {
+    display: none !important;
+  }
+
+  .article.content {
+    max-width: 100%;
+  }
+
+  .myst-admonition,
+  .article.content table,
+  .article.content pre {
+    break-inside: avoid;
+  }
+}

@@ -101,6 +101,7 @@ features.appimages.enable = true;              # Host-local AppImage support
 | `sd-switch` | `enable` | Aggressive systemd --user service restarts on activation |
 | `tune` | `enable`, `packages` | Package optimization (see [OVERVIEW.md](OVERVIEW.md)) |
 | `viewer` | `enable`, `alias`, `ripgrepAll`, `preferImageViewer`, `enableVideo`, `enableDirectoryTree`, `enableArchives`, `enableDataFormats`, `enableFzfPicker` | Terminal file viewer (`v` command) |
+| `vk` | `enable`, `vaultsDir` | Terminal-first wiki & Zettelkasten engine (`vk` command, on by default) |
 | `wsl-shell-integration` | `enable` | VSCode Remote-SSH + WSL2 shell integration compatibility fixes |
 
 **Suites** (`suites.<name>`) - Bundled application groups:
@@ -228,6 +229,72 @@ features.viewer = {
 ```
 
 **Multi-file behavior:** Multiple files default to continuous mode (streaming). Interactive tools (mpv, glow -t) only work with single files or `-p` flag.
+
+### `vk` - Terminal Wiki & Zettelkasten Engine (vk)
+
+Terminal-first, multi-vault note-taking system built on `gum` (prompts),
+`helix` (editing), `mystmd` (Markdown site builder/renderer), `pandoc`
+(a couple of narrow conversions), `dufs` (serving), and `graphviz`
+(diagrams). Every vault is a self-contained, Git-ready directory of
+Markdown notes under `features.vk.vaultsDir` (default `$HOME/Vaults`).
+
+```bash
+vk                       # Interactive hub menu (new/note/search/rename/check/watch/serve-all)
+vk new                   # Create a new vault
+vk note [vault]          # Create/edit/rename-or-move/delete notes, or fuzzy-search text
+vk import [vault]        # Import a File/Code/Clipboard/Bibentry/Link/Page into a note
+vk search [vault|all]    # Substring-search one vault, or every vault at once
+vk check [vault|all] [--external]
+                         # Validate a vault: strict MyST build + static checks
+                         # (frontmatter, links, assets, directives, Graphviz DOT)
+                         # --external also checks external links resolve
+vk watch [vault]         # Live MyST preview + dufs server
+vk build [vault]         # Build the vault's static HTML site
+vk export [vault] [file] [--format pdf|typst]
+                         # Export a note (or the vault's `exports:` frontmatter) to PDF/Typst
+vk serve-all             # Host every vault at once: / lists them, /<vault> serves it
+```
+
+Notable features:
+- **Zettelkasten navigation** - every note gets auto-generated Backlinks/
+  Related-Notes sections and vault-wide `explore/` pages (tags, recent,
+  orphans, a Graphviz-rendered link graph), refreshed on every stage.
+- **Rename/Move File** (`vk note` menu) - renaming a note preserves its
+  `id` and records the old path as an alias; moving any file (note or
+  asset/image) automatically rewrites every Markdown/`{doc}` link and
+  image embed pointing at it, across *all* vaults (vk vaults are always
+  sibling directories, so cross-vault relative links are valid and kept
+  correct too) - conceptually a single "file move" operation.
+  Never leaks an absolute path (or `$HOME`) into rewritten links.
+- **Native citations** - `vk import` → Bibentry parses a pasted BibTeX
+  entry's citekey, appends it to the vault's `references.bib` (rejecting
+  duplicate keys), and inserts a native MyST/Pandoc `[@citekey]`
+  citation - no hand-formatted citation strings.
+- **Graphviz diagrams** - a `:::{graphviz}` directive block (`:engine:`
+  dot/neato/fdp/sfdp/circo/twopi) is rendered to a content-addressed
+  static SVG at staging time; use MyST's native Mermaid support instead
+  for ordinary flowcharts/sequence diagrams.
+- **Offline plugin bundle** - MyST substitutions and a references
+  collector are vendored/pinned (no network access needed to build).
+- Shared Tokyo-Night/solarpunk styling across every vault, with an
+  optional per-vault `assets/vk-custom.css` override.
+
+Configuration:
+```nix
+features.vk = {
+  enable = true;               # on by default
+  vaultsDir = "$HOME/Vaults";  # root directory containing every vault
+};
+```
+
+Unit tests for the Python staging/check/rename scripts live alongside
+them in `modules/features/vk/scripts/test_*.py` - run with:
+```bash
+cd modules/features/vk/scripts
+python3 -m unittest discover -p 'test_*.py'
+```
+(needs PyYAML - the pinned Graphviz-rendering tests skip themselves
+gracefully if `dot`/`neato`/etc. aren't on `PATH`).
 
 ## Alien Packages
 

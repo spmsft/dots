@@ -4833,3 +4833,313 @@ Follows the same "one canonical source, mirrored per-consumer" shape as
 `features.notify`/`features.clipboard`'s backend-resolution pattern, and
 the same `dots` (shared, versioned) + `dots-local` (private, personal)
 split already used for e.g. `dotsLocal.shell.initExtra`.
+
+## 2026-08-03: `vk` migrated from Quarto to MyST (`mystmd`) + Pandoc/Typst; Tolaria removed
+
+Replaced `vk`'s entire Quarto-backed rendering pipeline with MyST as the
+sole Markdown parser/site/document renderer, keeping Pandoc + Lua only
+as a narrow, focused preprocessing step for `taskwarrior` directive
+blocks - not the AI-suggested `pandoc -f markdown+myst_spec` approach,
+which turned out to be infeasible: **no released Pandoc (including
+current upstream) has a `myst_spec` reader**. User signed off on the
+corrected architecture (MyST renders everything; Pandoc/Lua only
+touches `taskwarrior` blocks) before implementation began.
+
+**Canonical Taskwarrior syntax** (a supported MyST directive, not the
+originally-suggested `::taskwarrior[...]` inline-role form):
+
+```markdown
+:::{taskwarrior} Active GQL Tasks
+:project: gql-spec
+:status: pending
+:tags: database,gql
+:limit: 5
+
+Optional fallback text.
+:::
+```
+
+**Repository-level packaging** (`flake.nix`/`flake.lock`/`dtp-tools.nix`):
+removed `nixpkgs-quarto-pin` input/overlay entirely (surgically, from
+`flake.lock` too - unrelated pre-existing dependency bumps left
+untouched); replaced `suites.dtp-tools.quarto` with a default-enabled
+`suites.dtp-tools.mystmd` (`pkgs.mystmd`) alongside the pre-existing
+Pandoc/Typst entries. Also removed **Tolaria** (a GUI AppImage, unrelated
+to the doc pipeline but bundled into this same cleanup at user request -
+"didn't earn its keep") from `contexts/priv/appimages/manifest.nix` and
+its GUI cross-default in `modules/features/appimages.nix`.
+
+**Taskwarrior preprocessing layer** (new):
+`modules/features/vk/scripts/taskwarrior_preprocess.py` finds complete
+`:::{taskwarrior} ...:::` blocks in a Markdown file and rewrites *only*
+those to Pandoc-native fenced `Div` syntax, piping each through
+`pandoc --lua-filter=taskwarrior.lua`; every other line (any other MyST
+directive/role) passes through byte-identical. The filter
+(`modules/features/vk/filters/taskwarrior.lua`) queries `task export`
+via `pandoc.pipe`'s argv array (never a shell string - confirmed
+injection-proof live with an adversarial `project="demo; touch
+/tmp/PWNED"` attribute), and renders results as a real `pandoc.Table` via
+`pandoc.SimpleTable(...)` + `pandoc.utils.from_simple_table(...)` (the
+naive `pandoc.Table(...)`/`pandoc.TableBody(...)` constructors aren't
+directly callable in Pandoc 3.7.0.2's Lua API). Falls back gracefully
+(to the directive's own body, or a generated note) on missing `task`,
+query failure, malformed JSON, or an empty result.
+
+**`vk.sh` rewrite** (`modules/features/vk.nix` / `modules/features/vk/vk.sh`):
+- `_quarto.yml` → `myst.yml` (book-theme site, folder-preserving URLs,
+  explicit Materials/Records/Texts TOC sections via `pattern` globs).
+- Wikilinks (`[[file.md|Title]]`) → native Markdown links
+  (`[Title](file.md)`) in generated category indexes; `wikilinks.lua`
+  removed (MyST doesn't support Pandoc AST filters or that syntax).
+- Quarto's `{{< include main.md >}}` → MyST's native `{include}`
+  directive.
+- New **disposable per-vault staging tree** (`stage_vault()`): copies
+  ordinary files unchanged, routes only taskwarrior-tainted `.md` files
+  through the Python preprocessor + Lua filter first; every write is
+  `cmp -s`-guarded (no spurious mtime bumps, so MyST's own incremental
+  build cache still helps).
+- New frontmatter on authored notes: stable `id`
+  (`category-type-slug`), `tags` (derived from category+type),
+  alongside existing `title`/`type`/`date`. `exports:` stays opt-in.
+- New **`vk export [vault] [file] --format pdf|typst`** command: forces
+  a Typst export via `myst build --ci --force --typst`, then locates the
+  produced PDF/`.typ` bundle by **newest-file-since-a-timestamp-mark**
+  rather than by expected basename - MyST silently slugifies output
+  filenames (`with_tasks.md` → `with-tasks.pdf`), so a naive
+  `find -name "${BASE}.pdf"` glob misses the real output (**a real bug
+  caught and fixed during live testing**, not a hypothetical).
+- **`vk watch` no longer uses `dufs`.** Live-tested finding: `myst build
+  --html --watch` does **not** actually watch/rebuild on change - MyST
+  itself prints "Site content will not be watched and updated; use
+  'myst start' instead" - so the old `dufs`-fronting-a-directory design
+  (which also raced dufs' own start against a `_build/html` directory
+  that might not exist yet) was replaced with MyST's own dev server
+  (`myst start --keep-host --port $PORT --server-port $((PORT+1))`).
+  Also live-confirmed that `--headless` mode (content-server only)
+  serves **stale** content after an edit even though the rebuild
+  genuinely happens on disk - only the full two-server mode (app server
+  + content server) propagates live-reloaded content correctly. `HOST`
+  (an env var, not a CLI flag) is what actually controls bind address,
+  and is silently forced back to `localhost` unless `--keep-host` is
+  also passed - loopback-by-default, same contract as dufs elsewhere in
+  `vk`. A lightweight 1s-poll background loop re-runs `stage_vault()`
+  during `watch` so edits to the *real* note (not MyST's own staged
+  copy, which is what its watcher actually sees) still show up live.
+- `vk build`/`vk serve-all` still use plain `myst build --html` (a real,
+  natural-exit static build, confirmed live via `time (...)` - resolved
+  the open question from planning about whether it hangs like a server;
+  it doesn't, absent `--watch`) plus `dufs` for static serving -
+  unaffected by the `watch`-specific bug above.
+
+**Live migration**: `$HOME/Vaults` (root hub + the single `az` vault)
+converted in place - `_quarto.yml`/`wikilinks.lua`/`_extensions/
+taskwarrior`/`.quarto/`/`_site/`/`index_files/` removed, `myst.yml`
+written, wikilinks and the Quarto include shortcode converted, note
+frontmatter normalized (`id`/`tags` added, existing `title`/`type`/`date`
+preserved) - all **left uncommitted** in `az`'s own git repo for manual
+review; the root `Vaults/` directory itself was never a git repo, so
+there's nothing to commit/review there beyond the files on disk.
+
+**Validated**: `nix flake check` + full
+`homeConfigurations.default.activationPackage` build (twice - once after
+the packaging cleanup, again after the full `vk.sh` rewrite); `shellcheck`
+clean (only pre-existing info-level `SC2016`/`SC2153` notices); live
+smoke tests of every subcommand (`new`, `note`'s `write_note`, `rename`,
+`build`, `watch`'s new `myst start`-based live-reload - confirmed an edit
+to a real note appears in the served page within seconds, `export` in
+both `pdf` and `typst` formats, `serve-all`'s root-hub build + per-vault
+symlinking, served end-to-end through `dufs`) against a disposable
+fixture vault, then a real build of the migrated `az` vault itself
+(all pages built 200, including filenames containing spaces, the
+Taskwarrior table, and the `main.md` include). Confirmed `watch`
+(MyST's own dev server) and `build`/`serve-all` (`dufs`) both still bind
+`127.0.0.1` by default. `dots-ports` needed no code change to see either
+- it's a generic, live `ss`-based listening-socket enumerator with no
+per-app hardcoding.
+
+### 2026-08-03: fixed `vk serve-all` navigation crash (missing per-vault `BASE_URL`)
+
+Live usage after the migration surfaced a bug the original validation
+pass missed (it only `curl`'d a fixture vault's root, never clicked a
+hub → vault link in an actual browser): navigating from the `serve-all`
+hub page into a vault (e.g. `az`) threw `TypeError: Cannot read
+properties of undefined (reading 'handle')` in MyST's bundled React
+Router client code.
+
+**Root cause**: each vault is built as its own fully independent MyST
+site (own `myst build --html`, assuming it will be served from `/`), and
+`serve_all_rebuild()` just symlinks that output under
+`_build/html/<vault-name>/` so `dufs` can serve every vault from one
+static root. Without telling MyST it will actually be served from
+`/<vault-name>/`, every asset/route href it emits stays absolute-rooted
+(`/build/entry.client-HASH.js`, `/build/_shared/chunk-*.js`, ...).
+Reproduced directly: fetching `/<vault>/build/entry.client-HASH.js`
+resolved to the **hub's own** client bundle (different build, different
+route manifest hash) instead of the vault's - the hub's JS then tried to
+hydrate/route against the vault's page content, and its route-matches
+array (`useMatches()`-style hook, confirmed by grepping the exact
+`chunk-AQ2CODAG.js` bytes from the user's stack trace) contained an
+entry with no corresponding loaded route module, so `.handle` read
+`undefined`.
+
+**Fix**: MyST has no `--base-url` build flag but does honor a `BASE_URL`
+**environment variable** at build time (confirmed live: with
+`BASE_URL=/demo`, every emitted href becomes `/demo/build/...`).
+`myst_build()` in `vk.sh` now takes an explicit base-url as its 2nd
+positional arg - `""` for a standalone build (`vk build`/`vk watch`,
+served from `/`) or `"/<vault-name>"` when `serve_all_rebuild()` builds
+a vault for the shared hub. The chosen base-url is recorded in a
+`.vk-staging/_build/.base_url` marker file; `vault_needs_build()` now
+takes the same expected base-url and forces a rebuild on mismatch (not
+just on a stale mtime) - necessary because a vault previously built
+standalone (or vice versa) has baked-in asset paths that are silently
+wrong for the other context, and a plain mtime check would never catch
+that since no *source* file changed.
+
+Validated live end-to-end (not just `curl`, this time): copied the real
+`az` vault into a scratch dir, ran `serve-all`, and confirmed
+`/az/build/entry.client-*.js` now resolves to the vault's own bundle
+(200, matching hash referenced by `/az/`'s own `index.html`) rather than
+colliding with the hub's `/build/...` path, while a plain standalone
+`vk build az` still emits root-relative (`/build/...`) hrefs as before.
+
+**Learning captured for future multi-site-composition work**: never
+assume a client-rendered SPA's static build output is relocatable by
+symlink/reverse-proxy alone - check for a base-path build-time
+environment variable/config option before assuming path-nesting "just
+works", and validate by actually following the emitted bundle hrefs at
+the real serving path, not just confirming the top-level page loads.
+
+### 2026-08-03: fixed unrendered category-listing links (unencoded spaces in link destinations)
+
+Reported live: notes with a space in their filename (e.g. "Agentic
+Coding Tools.md") showed up in a category listing page (`texts/index.md`
+etc.) as literal unrendered text - `[Agentic Coding Tools](Agentic
+Coding Tools.md)` - instead of a clickable link. Root cause:
+`regen_category_index()` built each link's destination directly from
+`basename "$f"`, and a bare (non-`<...>`-wrapped) CommonMark/MyST link
+destination containing a literal space is invalid syntax - it gets
+parsed as plain text, not a link. Confirmed via the built page's own
+AST (`_build/html/index-N.json`'s `mdast`): before the fix the note's
+entry was a bare `text` node containing the raw `[Title](file.md)`
+string; after the fix it's a proper `link` node with a resolved `url`.
+
+**Fix**: added a small `url_encode_path()` helper (percent-encodes
+space/`#`/`?` - the characters that would otherwise break or
+misdirect a bare link destination - while leaving `/` path separators
+alone) and ran every generated link destination through it: category
+listings (`regen_category_index()`), the serve-all hub's per-vault
+links, and its global-page links - all three build a link destination
+directly from a filename/vault name, so all three had the same latent
+bug even though only the category-listing case had been hit in
+practice so far.
+
+**Investigated but NOT a bug**: the user also reported `serve-all`'s
+`/az/index-1`-style category pages (MyST auto-numbers colliding
+`index` slugs from `materials/index.md`/`records/index.md`/
+`texts/index.md` all sharing the base name `index`) as slow to load.
+Traced this as far as: (a) every asset actually referenced by the
+page's HTML shell resolves in single-digit milliseconds locally, (b)
+the ~100+ `NNNN.thebe-core.min.js` chunk files present in every MyST
+book-theme build (Jupyter/Thebe in-browser code execution runtime -
+unneeded for a plain-notes Zettelkasten) are not referenced anywhere in
+the initial page shell or its route JSON, so they're not being eagerly
+fetched, and (c) `site.thebe: false` is rejected by this pinned mystmd
+1.9.1's config schema ("cannot include reserved key thebe") - a known
+mystmd regression reverted only in 1.10.1 (changelog: "Revert thebe
+#2903"), which nixpkgs hasn't picked up yet as of this writing. Could
+not reproduce actual slowness against the local static build in this
+session; most likely explanation is the inherent ~10-25s `myst build
+--html` time per vault during `serve-all`'s startup/rebuild-on-change
+window (already noted in the original migration's learnings entry), not
+a distinct bug. Also checked while investigating: the per-page
+prev/next footer navigation metadata in `index.json` (`footer.navigation
+.{prev,next}.url`) stays root-relative (e.g. `/page2`) even with
+`BASE_URL` set at build time - but the *rendered* sidebar/TOC `<a href>`
+tags are correctly prefixed either way, so this is presumed to be
+handled transparently by the client router's own `basename` config
+(consistent with `serve-all` working end-to-end in the live BASE_URL
+fix validated earlier today) rather than a live bug - flagged here in
+case a future report ties back to it.
+
+**Learning for next mystmd bump**: revisit `site.thebe: false` (or
+whatever 1.10.1+'s equivalent option is) once nixpkgs's `mystmd`
+package updates past 1.10.1 - it should let vk-managed vaults opt out
+of bundling the unused Thebe/Jupyter runtime chunks entirely, trimming
+every vault's `_build/html` output significantly.
+
+## 2026-08-03: `serve-all` "not found on first/second load" is WSL2 localhost-forwarding lag, not a vk bug
+
+Follow-up on the same-day `index-1` slowness report: the user clarified
+the actual symptom is a literal "not found" on the first one or two
+page loads right after `vk serve-all` starts, requiring a reload -
+not just perceived slowness.
+
+Re-investigated with a controlled cold start: wiped `az`'s and the
+root's `_build`/`.vk-staging`, launched a fresh `vk serve-all` on a
+scratch port, waited for the exact "Listening on" log line, then
+curled the vault path five times in a tight loop immediately after -
+all five returned `200` in ~2ms, every time. Also re-tested directly
+against the user's own long-running `serve-all` process (started well
+after the BASE_URL/link-encoding fixes were deployed) with the same
+result: consistently `200`, no reproducible server-side 404 at any
+point after "Listening on" prints.
+
+Root cause is therefore almost certainly **WSL2's localhost-forwarding
+relay**, not `vk`/`dufs`/MyST: this box uses WSL2 NAT networking
+(confirmed via `/etc/wsl.conf`, no `networkingMode=mirrored`), where
+Windows-side access to `127.0.0.1:<port>` is relayed into the WSL VM by
+a per-port `wslrelay.exe` process spawned on demand. That relay has a
+well-known startup race - when a socket has *just* started listening
+inside WSL, the very first connection attempt(s) from the Windows side
+can arrive before the relay has finished wiring up, failing or timing
+out, while a reload a moment later succeeds once the relay has caught
+up. This matches the reported pattern exactly (first/second load fails,
+then works) and is invisible to any test run from inside WSL itself
+(curl from the Linux side bypasses the relay entirely), which is why
+this session's repeated in-VM curl tests never reproduced it.
+
+This is a Windows/WSL2 networking behavior outside `vk`'s control, not
+a fixable code bug. Practical mitigations (not implemented, since they
+are environment/user choices rather than repo changes):
+- Wait a couple of seconds after `vk serve-all` prints "Listening on"
+  before loading the page in the Windows browser.
+- Switch WSL2 to mirrored networking mode (`networkingMode=mirrored`
+  in `%UserProfile%\.wslconfig`, Windows 11 22H2+) - this removes the
+  relay/NAT layer entirely, eliminating the race.
+
+## 2026-08-04: vk enhancement session decisions
+
+- **Cross-vault relative-link rewriting on rename/move**: since all vk
+  vaults are always immediate sibling subdirectories of one
+  `$VAULTS_DIR` (confirmed via `vk.sh`'s `list_vaults()`), a relative
+  link from vault A to a note/asset in vault B (e.g.
+  `../other-vault/materials/note.md`) is valid and must be kept correct
+  across a rename/move. `note_rename.py` was generalized to do all
+  matching/rewriting in absolute-filesystem-path space internally (via
+  `os.path.normpath`), scanning *every* sibling vault's `.md` files, but
+  always writes back a relative path (`os.path.relpath` between two
+  absolute paths) - so no `$HOME`/absolute path ever leaks into vault
+  content or generated URLs.
+- **Rename/Move generalized to any file, not just notes**: `.md` files
+  go through `_move_note()` (preserves `id`, adds an alias entry for the
+  old path); any other file (image, asset) is a plain `shutil.move()`.
+  Both paths share the same link-rewriting pass, including image embeds
+  and `{doc}` roles - conceptually a single "file move" operation.
+  Wired into `vk note`'s menu as "Rename/Move File", with the file
+  picker broadened to include `assets/`.
+- **Bibentry import uses native MyST/Pandoc citations**: pasting a
+  BibTeX entry now (1) parses its citekey, (2) rejects it if that key
+  already exists in the vault's `references.bib`, (3) appends the raw
+  entry to `references.bib` (created on first use if missing - older
+  vaults predate `vk new` seeding an empty one), and (4) inserts a
+  native `[@citekey]` citation as the note's primary content, instead of
+  the old hand-formatted citation string. `vk new` now seeds an empty
+  `references.bib` per vault.
+- **`vk check [vault|all] [--external]`**: new command that stages a
+  vault, runs `myst build --ci --strict --html` (+`--check-links` under
+  `--external`), then runs `vault_check.py`'s static/offline checks
+  (frontmatter shape, links, assets, directives, Graphviz DOT),
+  aggregating pass/fail per vault (and overall, for `all`) with correct
+  exit codes. Must never disturb a vault's existing `_build` cache (see
+  learnings.md for the backup/restore fix and why it's needed).
