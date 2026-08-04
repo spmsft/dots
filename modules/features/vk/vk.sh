@@ -200,6 +200,7 @@ stage_vault() {
                     mkdir -p "$staging/assets"
                     "$PYTHON_BIN" "$VK_GRAPHVIZ_PREPROCESS" "$cur" "$tmp2" \
                         --staging-assets-dir "$staging/assets" \
+                        --doc-rel-dir "$(dirname "$rel")" \
                         --dot "$GRAPHVIZ_DOT_BIN" --neato "$GRAPHVIZ_NEATO_BIN" \
                         --fdp "$GRAPHVIZ_FDP_BIN" --sfdp "$GRAPHVIZ_SFDP_BIN" \
                         --circo "$GRAPHVIZ_CIRCO_BIN" --twopi "$GRAPHVIZ_TWOPI_BIN"
@@ -209,7 +210,7 @@ stage_vault() {
                     changed=1
                 fi
                 if [ "$changed" = "1" ]; then
-                    if ! cmp -s "$cur" "$dest" 2>/dev/null; then mv "$cur" "$dest"; else rm -f "$cur"; fi
+                    if ! cmp -s "$cur" "$dest" 2>/dev/null; then mv -f "$cur" "$dest"; else rm -f "$cur"; fi
                 else
                     cmp -s "$f" "$dest" 2>/dev/null || cp "$f" "$dest"
                 fi
@@ -237,7 +238,7 @@ stage_vault() {
         cat "$path/assets/vk-custom.css" >> "$tmp"
     fi
     if ! cmp -s "$tmp" "$staging/assets/vk-managed.css" 2>/dev/null; then
-        mv "$tmp" "$staging/assets/vk-managed.css"
+        mv -f "$tmp" "$staging/assets/vk-managed.css"
     else
         rm -f "$tmp"
     fi
@@ -572,9 +573,9 @@ serve_all_rebuild() {
     # every call, not authored/preserved. Diff-guarded so an unchanged
     # stylesheet never bumps its own mtime.
     tmp="$VAULTS_DIR/assets/vk-managed.css.vk-tmp"
-    cp "$VK_THEME_CSS" "$tmp"
+    cat "$VK_THEME_CSS" > "$tmp"
     if ! cmp -s "$tmp" "$VAULTS_DIR/assets/vk-managed.css" 2>/dev/null; then
-        mv "$tmp" "$VAULTS_DIR/assets/vk-managed.css"
+        mv -f "$tmp" "$VAULTS_DIR/assets/vk-managed.css"
     else
         rm -f "$tmp"
     fi
@@ -701,14 +702,33 @@ serve_all_rebuild() {
 
     # Symlink each built vault's staged _build/html into the just-built
     # root _build/html, named after the vault itself (so "/<vault-name>/"
-    # serves it directly, no extra path segment needed) - drop any stale
-    # symlinks first (e.g. a vault renamed/removed since the last
-    # rebuild).
+    # serves it directly, no extra path segment needed). This runs every
+    # ~3s from serve-all's poll loop while dufs is concurrently serving
+    # requests, so it must never leave a name momentarily missing: swap
+    # each symlink in with "create under a temp name, then mv onto the
+    # real name" (mv is an atomic rename on the same filesystem), rather
+    # than deleting every existing symlink up front and recreating them
+    # one by one - the latter left a real window (previously hit in
+    # practice) where dufs saw the target path as nonexistent and served
+    # its own "folder will be created when a file is uploaded" page
+    # instead of a 404 or the real vault, for any request during that
+    # window. Stale symlinks (a vault renamed/removed since the last
+    # rebuild) are still dropped, but only ones NOT in this rebuild's
+    # vault set, and only after every current vault's symlink is already
+    # back in place.
     mkdir -p "$VAULTS_DIR/_build/html"
-    find "$VAULTS_DIR/_build/html" -maxdepth 1 -type l -delete
     for name in "${BUILT[@]}"; do
-        ln -s "$VAULTS_DIR/$name/.vk-staging/_build/html" "$VAULTS_DIR/_build/html/$name"
+        ln -sfn "$VAULTS_DIR/$name/.vk-staging/_build/html" \
+            "$VAULTS_DIR/_build/html/$name.vk-tmp"
+        mv -Tf "$VAULTS_DIR/_build/html/$name.vk-tmp" \
+            "$VAULTS_DIR/_build/html/$name"
     done
+    while IFS= read -r -d '' f; do
+        bn=$(basename "$f")
+        if ! printf '%s\n' "${BUILT[@]}" | grep -qxF "$bn"; then
+            rm -f "$f"
+        fi
+    done < <(find "$VAULTS_DIR/_build/html" -maxdepth 1 -type l -print0)
 
     if [ "$quiet" != "1" ] && [ "${#UNBUILT[@]}" -gt 0 ]; then
         echo "⚠ Failed to build (see 'vk build <vault>'): ${UNBUILT[*]}" >&2

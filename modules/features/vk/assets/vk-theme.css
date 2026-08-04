@@ -261,3 +261,94 @@ body {
     break-inside: avoid;
   }
 }
+
+/* Work around an upstream book-theme (mystmd) cascade bug: at exactly
+ * the "xl" breakpoint (>=1280px), `.myst-primary-sidebar`'s responsive
+ * `xl:article-grid` utility (display: grid) has higher source-order
+ * priority than its own `.hidden` (display: none) class, even while
+ * the sidebar is logically "closed". That makes the closed mobile
+ * drawer keep rendering (display stays grid, not none) as a fixed,
+ * full-viewport panel with an opaque white background sitting on top
+ * of the real article content - it stays `pointer-events: none`, so
+ * clicks still reach the real content underneath and dev tools/hit-
+ * testing report everything correctly, which is what makes this so
+ * easy to mistake for a "vault not loading" bug rather than a paint-
+ * only one.
+ *
+ * IMPORTANT: this same element also *legitimately* hosts the persistent
+ * desktop left-nav rail at >=1280px (`.myst-primary-sidebar-pointer`,
+ * nested inside it via `xl:flex`/`xl:col-margin-left`) - forcing
+ * `display: none` on the whole container (an earlier version of this
+ * fix did exactly that) hides that nav rail too. The correct fix only
+ * strips the background so the container can still lay out its real
+ * children, without visually covering the article: */
+.myst-primary-sidebar.hidden {
+  background: transparent !important;
+}
+
+/* Second, separate upstream book-theme bug: the persistent desktop
+ * left-nav rail itself (`.myst-primary-sidebar-pointer`, via its
+ * `xl:col-margin-left` utility class) is placed with
+ * `grid-column: page / body-start` - but `page` is never actually
+ * defined as a named grid line in book-theme's own `.article-grid`
+ * templates (only `page-start`/`page-end` are). Since that start value
+ * doesn't match any real line, the browser falls back to the CSS Grid
+ * auto-placement algorithm instead of the intended explicit position,
+ * and auto-placement's result depends on the current viewport's
+ * `.article-grid` breakpoint (which changes track counts/widths at
+ * 768px/1024px/1280px/1536px) - so the nav rail lands in the *wrong*
+ * column specifically at some widths, overlapping the real article
+ * content.
+ *
+ * Two prior attempts stayed inside `.article-grid`'s own column
+ * system and both turned out engine-fragile:
+ *   1. valid named lines (`grid-column: page-start / body-start`) -
+ *      only fixed Chromium; Firefox/Gecko resolves the *original*
+ *      invalid-line fallback differently, so it stayed broken there.
+ *   2. numeric line indices (`grid-column: 3 / 6`) - still fragile,
+ *      because `.article-grid` has exactly two `1fr` tracks (columns
+ *      2 and the trailing one before `screen-end`) that absorb all
+ *      leftover viewport width, and most of the *other* columns in the
+ *      same grid are sized in `ch` (glyph-width) units. Chromium and
+ *      Firefox don't resolve `ch` identically, so the leftover width
+ *      handed to the `1fr` tracks differs by engine even though our
+ *      own rule only referenced fixed `rem` tracks - shifting column
+ *      3's absolute pixel position differently per engine regardless
+ *      of which correct line/index we pin it to.
+ *
+ * The only way to stop inheriting that is to stop being a grid
+ * participant at all: take the rail out of `.article-grid` entirely
+ * with `position: fixed`, sized/placed in plain viewport pixels that
+ * don't depend on `.article-grid`'s own track resolution in either
+ * engine. `60px` matches the real `.myst-top-nav` header height
+ * (confirmed against a real build's rendered layout); `18rem` clears
+ * the article body's own leftmost column in both engines with margin
+ * to spare, verified via matching Chromium/Firefox screenshots across
+ * 1280-1920px after this change (see memory-bank/learnings.md). */
+.myst-primary-sidebar-pointer {
+  position: fixed !important;
+  top: 60px !important;
+  left: 0 !important;
+  grid-column: unset !important;
+  /* Narrow enough to clear the article's own leftmost text column at
+   * the smallest width this rail is shown at (1280px, where the
+   * article title starts around x=224px) - verified empirically via
+   * screenshots/getBoundingClientRect at 1280-1920px, see
+   * memory-bank/learnings.md. */
+  width: 13rem !important;
+  max-height: calc(100vh - 60px) !important;
+  /* Not `overflow-y: auto`: this element already natively ships its
+   * own `overflow-hidden` (see book-theme's compiled class list) and
+   * relies on its inner `.myst-primary-sidebar-nav` child (which has
+   * its own native `overflow-y-auto`) to scroll a tall TOC, while the
+   * outer rail itself stays clipped so the flex-pinned footer below it
+   * never gets pushed out of view. Overriding that to `auto` here added
+   * a *second*, redundant scrollbar on the outer rail - which then
+   * visibly flashed/repainted while the footer's native 700ms mount
+   * transition (`transition-all duration-700 translate-y-6 opacity-0`,
+   * unrelated to this fix) briefly changed the rail's content height on
+   * every page load. Matching the native `hidden` here removes that
+   * extra scrollbar and the flash with it. */
+  overflow: hidden !important;
+  z-index: 20 !important;
+}

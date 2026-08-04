@@ -915,3 +915,234 @@ first shell with HOME/USER unset): NIX_PROFILES and
   for links `note_rename.py` didn't rewrite live (e.g. hand-typed links
   added after a rename) - `note_rename.py` itself rewrites matching
   links directly and never depended on this alias-resolution path.
+- Building the demo vault surfaced two real, previously-untested bugs:
+  (1) `graphviz_preprocess.py` always emitted a staging-root-relative
+  image path (`assets/graphviz/<hash>.svg`), which 404s for any note
+  one category level deep (materials/records/texts - i.e. every real
+  note) since MyST resolves that path relative to the note's own
+  directory - every existing test used a flat `source_path="note.md"`,
+  so this never surfaced until a real nested note used the directive.
+  Fixed by adding a `doc_rel_dir` parameter (wired through `vk.sh` as
+  `--doc-rel-dir "$(dirname "$rel")"`) so the emitted path is computed
+  relative to the note's own directory via `posixpath.relpath`. (2) A
+  `myst-substitutions` value beginning with `@` (e.g. `"@spmsft"`) that
+  gets substituted into prose text is then parsed by MyST/Pandoc as a
+  citation reference (`@key`), producing a spurious "Could not link
+  citation" warning - substitution values should avoid a leading `@` (or
+  any other Markdown-special leading character) if they'll be inlined
+  into prose rather than code.
+- Found and fixed a real **upstream mystmd/book-theme CSS cascade bug**
+  that made article content invisible at browser widths >=1280px (the
+  Tailwind `xl` breakpoint), reported by the user as "past a certain
+  window width the main content pane becomes invisible, side nav still
+  works." Root cause: `.myst-primary-sidebar` (the closed mobile nav
+  drawer) carries both a `hidden` class (`display: none`, meant to keep
+  it closed/invisible below `xl`) and a responsive `xl:article-grid`
+  utility (`display: grid`, meant for the *open* desktop rail) - at
+  >=1280px the `@media (min-width:1280px)` rule's `display: grid` wins
+  the cascade over the same-specificity `.hidden{display:none}` purely
+  by source order, so the closed drawer renders anyway as a `position:
+  fixed`, full-viewport (`w-[75vw]`/`h-screen` - meant only for the
+  mobile drawer's *own* sizing, itself compiled with inverted `max-xl:`
+  media-query logic, a second latent bug in the same rule cluster),
+  opaque white panel sitting on top of the real content. It stays
+  `pointer-events: none` at that width, though, so clicks/hit-testing
+  (`elementFromPoint`) still reach the real content underneath -
+  DOM/CSSOM inspection (computed styles, rects, colors, opacity) all
+  looked completely correct, which is what made this so easy to
+  mistake for "the vault isn't loading" rather than a paint-only bug.
+  This almost certainly also explains a separate-seeming user report
+  that `serve-all`'s root vault list appeared "empty" - the root hub
+  page is built with the same book-theme and is subject to the exact
+  same bug at the same breakpoint. Confirmed via headless-Chromium
+  screenshots (both a bare `chromium --headless --screenshot` sweep and
+  Playwright, against the *real* production path - a `vk build` static
+  site served by `dufs`, not `vk watch`'s dev server, since the
+  dev-server's own live-reload client turned out to be an unrelated red
+  herring during investigation) across widths 900-1600px: broken at
+  every width >=1280px, fine below it, and fixed at every width once
+  patched. Fix: `vk-theme.css` appends one targeted override,
+  `.myst-primary-sidebar.hidden { background: transparent !important; }`,
+  after book-theme's own CSS in the cascade - deliberately not touching
+  or forking `book-theme`/`mystmd` itself. **Caution**: a first attempt
+  used `display: none !important` instead of stripping just the
+  background - that also silenced the invisible-overlay bug, but broke
+  the *legitimate* desktop left-nav rail, since the real persistent nav
+  (`.myst-primary-sidebar-pointer`, shown via `xl:flex`/
+  `xl:col-margin-left`) is nested **inside** this same
+  `.myst-primary-sidebar` container and needs it to actually lay out
+  (not `display: none`) at >=1280px in order to render at all -
+  `display: none` on the parent unconditionally collapses all
+  descendants regardless of their own `display` value. The
+  background-only override keeps the container in normal (grid) flow
+  so the nested nav rail still renders, while removing only the opaque
+  fill that was painting over the article content. Re-verify this
+  specific regression (screenshot sweep at width breakpoints
+  1024/1279/1280/1300/1400/1536/1600 against a real `vk build` +
+  `dufs`-served static site, checking **both** that article content is
+  visible **and** that the desktop nav rail (`.myst-primary-sidebar-
+  pointer`) still renders with nonzero width at >=1280px) if `mystmd`/
+  `book-theme` is ever upgraded, in case upstream fixes or changes this
+  cascade and the override becomes redundant or needs adjusting.
+- **Follow-up to the above**: after the `background: transparent` fix,
+  the user reported the nav rail was visible again but now painting
+  *over* the article content with a transparent background - i.e. the
+  same nav rail was genuinely mispositioned, not just masked/unmasked
+  by the earlier opaque-background bug. Root cause was a **second,
+  independent upstream `book-theme` CSS authoring bug**: the desktop
+  nav rail (`.myst-primary-sidebar-pointer`) gets its column position
+  from a `xl:col-margin-left` utility class, compiled to
+  `.col-margin-left { grid-column: page / body-start }` - but `page` is
+  never actually defined as a named grid line in any of book-theme's
+  own `.article-grid` breakpoint templates (only `page-start`/
+  `page-end` exist as named lines; `page` alone does not). Since the
+  grid-column start value doesn't match any real named line, browsers
+  fall back to the CSS Grid auto-placement algorithm instead of the
+  intended explicit position - and auto-placement's result depends on
+  the current `.article-grid` breakpoint's track layout, which differs
+  at 768px/1024px/1280px/1536px. That made the rail land in the
+  *correct-looking* spot at some widths (e.g. 1280-1535px) by accident
+  of auto-placement, but visibly overlap the article content at others
+  (e.g. >=1536px, confirmed concretely broken at exactly 1600px both on
+  a fresh page load and after a live browser resize - this is **not**
+  purely a resize-timing bug, despite initially looking that way when
+  only 1400px/1280px fresh loads were spot-checked and looked fine).
+  Confirmed via Playwright: `getComputedStyle(...).gridColumn` on the
+  rail read back as the literal string `"page / body-start"`, and
+  grepping the built CSS confirmed `page` (unsuffixed) is genuinely
+  absent from every `.article-grid` breakpoint's `grid-template-
+  columns`. Fix: another targeted `vk-theme.css` override forcing the
+  correct, valid named line explicitly -
+  `.myst-primary-sidebar-pointer { grid-column: page-start / body-start
+  !important; }` - scoped to that one element (not the shared
+  `.col-margin-left` utility class, which is also used for unrelated
+  margin-note/aside elements elsewhere and must not be touched
+  globally). Verified fixed via Nix rebuild + the real, actual
+  `vk serve-all` process (not just a standalone `vk build`) against a
+  fresh page load sweep (375-1700px) **and** a live-resize sequence
+  (1600->1400->1200->1000->800->1000->1200->1400->1600 on the same
+  page, matching how a user actually drags a window) - both scenarios
+  now render with no overlap and the hamburger menu present <1280px.
+  **This turned out to be Chromium-only validation and incomplete -
+  see the follow-up entry below for what actually shipped.**
+
+- **Follow-up (2026-08-04/05), correcting the above**: the
+  `page-start / body-start` named-line fix only fixed Chromium.
+  Zen browser (the user's actual daily browser, confirmed to be a
+  Gecko/Firefox fork, not Chromium as originally assumed) still showed
+  the rail mispositioned. Headless LibreWolf (a Gecko browser usable
+  for scripted screenshot testing - `librewolf --headless --profile
+  <scratch-dir> --screenshot out.png --window-size=W,H <url>`, always
+  with an isolated `--profile`, never the real default profile - an
+  early mistake here left a `.startup-incomplete` marker in the user's
+  actual browser profile after force-killing a hung headless instance)
+  reproduced the same overlap. A second attempt pinned the same
+  position with *numeric* grid-line indices instead of names
+  (`grid-column: 3 / 6 !important`) reasoning that numeric indices
+  are spec-unambiguous - this **still did not fully fix Firefox**,
+  with inconsistent results across widths. Root cause, found by
+  extracting book-theme's actual compiled `.article-grid` column
+  template (`grep -o '\.article-grid{[^}]*}' _build/html/build/_assets/
+  app-*.css`): the grid has exactly two `1fr` tracks that absorb all
+  leftover viewport width, and most of the *other* tracks in the same
+  template are sized in `ch` (glyph-width) units. Chromium and Firefox
+  do not resolve `ch` identically, so the leftover width handed to the
+  `1fr` tracks differs by engine even when the rail's own rule only
+  references fixed `rem`-based tracks - shifting its absolute pixel
+  position differently per engine regardless of which line/index it's
+  pinned to. **Any fix that keeps the rail as a participant in
+  `.article-grid` inherits this same-engine-divergent `1fr` sizing.**
+
+  Fix that actually resolved it: stop being a grid participant at all.
+  `.myst-primary-sidebar-pointer` is now `position: fixed !important`
+  (not grid-positioned), `top: 60px` (the real `.myst-top-nav` header
+  height), `left: 0`, `width: 13rem`, `max-height: calc(100vh - 60px)`
+  with `overflow-y: auto`. `13rem` (not a rounder `18rem`/`15rem`) was
+  chosen empirically: the article title's own leftmost text column
+  starts at `x=224px` in Chromium at the narrowest width the rail is
+  shown at (1280px, the `xl:` breakpoint) - confirmed via
+  `getBoundingClientRect()` on the real `h1` - so the rail's right edge
+  must stay under that with margin to spare; wider values (18rem/288px,
+  15rem/240px) both visibly overlapped the title at exactly 1280px.
+  Verified clean with no overlap at 1280/1400/1536/1700/1920px in both
+  a real Chromium (Playwright) and a real Firefox/Gecko (headless
+  LibreWolf) session, on both the root vault index page and a deep
+  article page with an expanded sidebar tree, against an isolated
+  `myst build` output (not `$VAULTS_DIR` - see the next entry for why
+  that distinction matters for testing methodology).
+
+  A second, unrelated but easily-confused-for-the-same-bug symptom was
+  also chased and ruled out during this: the user separately reported
+  intermittent 404s/"myst error" pages ("still getting lots of not
+  faults and the occasional myst error page"). Root cause found: two
+  independent `vk serve-all` instances (one real, one a test scratch
+  instance) were pointed at the **same** `$VAULTS_DIR` at once - each
+  instance's `serve_all_rebuild()` reruns every 3 seconds and
+  previously deleted every vault symlink under `_build/html` up front
+  before recreating them one by one (`find ... -delete` then a `ln -s`
+  loop), leaving a real window where a concurrent request saw the path
+  as nonexistent and dufs served its own "folder will be created when
+  a file is uploaded" placeholder. Confirmed via a 40s curl stress test
+  against a single real instance (0/178 requests failed) versus the
+  same test with two competing instances (roughly half failed) - **the
+  flakiness was a testing-methodology artifact (never run two
+  `serve-all` instances against the same `$VAULTS_DIR`), not a bug a
+  normal single-instance user would hit.** The delete-then-recreate
+  symlink swap was still hardened defensively regardless (atomic
+  `ln -sfn` into a `.vk-tmp` name + `mv -Tf` onto the real name, so a
+  name is never briefly absent even for one instance), since it was a
+  latent race regardless of how visible it was in practice.
+
+  Testing-methodology note for any future vk layout/serving work: do
+  **not** point a second scratch `vk serve-all` (or any test dufs/myst
+  process) at `$VAULTS_DIR` while another instance might be running -
+  `VAULTS_DIR` is baked in at Nix build time (`vk.nix`'s
+  `VAULTS_DIR="${cfg.vaultsDir}"`, not env-overridable), so every
+  `vk serve-all` invocation on this machine targets the same real
+  directory. Use a fully separate `/tmp` copy of a vault plus a direct
+  `myst build --ci --html` + `python3 -m http.server` instead for CSS/
+  layout iteration - it exercises the identical compiled theme output
+  without any risk of two rebuild loops fighting over the same
+  `_build/html` tree.
+
+  Follow-up (2026-08-05): the user had not actually rebuilt/activated
+  the `position: fixed` change before reporting it "still broken" -
+  once rebuilt+activated, the rail/content overlap was confirmed fixed
+  and usable. Two smaller cosmetic reports followed, both root-caused
+  against a real staged build (`stage_vault`'s actual
+  `assets/vk-managed.css`, not a bare `myst build` without it - the
+  latter gives false negatives since the vault's own `myst.yml` never
+  references the managed stylesheet directly):
+  - "No hamburger menu" at desktop widths is native/expected book-theme
+    behavior, not a bug: the mobile hamburger (`.myst-top-nav-menu-
+    button`, inside a `block xl:hidden` wrapper) and the persistent
+    desktop rail are mutually exclusive by design, swapping at the same
+    1280px `xl` breakpoint - confirmed via Playwright at
+    900/1100/1279/1280/1400/1920px that exactly one of the two is ever
+    visible. User confirmed rail-only (no collapse control) is fine as
+    designed.
+  - A vertical "scrollbar/separator flash" between the rail and content
+    on every page load was a real regression introduced by this fix
+    itself: `.myst-primary-sidebar-pointer` natively ships its own
+    `overflow-hidden` (the inner `.myst-primary-sidebar-nav` child has
+    its own `overflow-y-auto` and does the actual TOC scrolling, while
+    the outer rail stays clipped so the flex-pinned footer never gets
+    pushed out of view) - the `position: fixed` rule's
+    `overflow-y: auto !important` overrode that with a second, redundant
+    scrollbar on the outer rail. Book-theme's native footer entrance
+    animation (`transition-all duration-700 translate-y-6 opacity-0`,
+    unrelated to this fix, present upstream regardless) briefly changes
+    the rail's content height on every load, so that extra scrollbar
+    appeared/disappeared/repainted during those 700ms - reads as a
+    "flash". Fixed by changing that property to `overflow: hidden
+    !important`, matching the native behavior exactly (verified via
+    Playwright: `overflowY` computed style is `hidden` again, inner TOC
+    list still scrolls independently when content exceeds
+    `max-height`). Lesson: when taking an element out of grid
+    participation, only override the specific properties needed
+    (`position`/`top`/`left`/`grid-column`) - copying in unrelated
+    properties "defensively" (like `overflow-y: auto` here, added out of
+    caution about the new `max-height`) can silently fight the theme's
+    own native layout in ways that only show up as a transient visual
+    glitch, not a broken layout, so they're easy to miss without
+    actually diffing computed styles against the unmodified element.

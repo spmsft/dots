@@ -5143,3 +5143,13 @@ are environment/user choices rather than repo changes):
   aggregating pass/fail per vault (and overall, for `all`) with correct
   exit codes. Must never disturb a vault's existing `_build` cache (see
   learnings.md for the backup/restore fix and why it's needed).
+- **Added a committed `vk` demo/test vault** at
+  `modules/features/vk/demo-vault/` to exercise every user-facing `vk`
+  feature (frontmatter/aliases, cross-links/backlinks/related-notes,
+  asset embeds, native citations, both managed plugins, native Mermaid,
+  vk's own Graphviz directive, native tabs/cards, the `taskwarrior`
+  directive's fallback path, and `exports:`) in one place, per explicit
+  request to keep it up to date as `vk` changes. See its own `README.md`
+  for the feature table and how to validate it live, and
+  `architecture.md` section 12 entry 10 for the standing keep-in-sync
+  rule this creates.

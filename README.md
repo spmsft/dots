@@ -296,6 +296,13 @@ python3 -m unittest discover -p 'test_*.py'
 (needs PyYAML - the pinned Graphviz-rendering tests skip themselves
 gracefully if `dot`/`neato`/etc. aren't on `PATH`).
 
+A committed demo/showcase vault exercising every feature above lives at
+`modules/features/vk/demo-vault/` (see its own `README.md` for the
+feature table) - synced automatically into `$VAULTS_DIR/vk-demo-vault`
+on every `apply-dots`, so it's already visible in the hub menu/
+`vk serve-all` after activating. Kept up to date alongside any change to
+`vk`'s Markdown/plugin/navigation surface.
+
 ## Alien Packages
 
 Mix native distro packages (pacman, paru, zypper) with Nix packages for better system integration.

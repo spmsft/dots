@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120" viewBox="0 0 240 120">
+  <rect width="240" height="120" fill="#1a1b26"/>
+  <circle cx="60" cy="60" r="30" fill="#7aa2f7"/>
+  <circle cx="180" cy="60" r="30" fill="#9ece6a"/>
+  <line x1="90" y1="60" x2="150" y2="60" stroke="#c0caf5" stroke-width="4"/>
+  <text x="120" y="105" fill="#c0caf5" font-family="sans-serif" font-size="12" text-anchor="middle">vk asset embed demo</text>
+</svg>

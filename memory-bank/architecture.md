@@ -601,3 +601,17 @@ collected here in one place, rather than left scattered across dated
    tries to set it. `composition.nix`'s own imports-list comment names
    every feature this applies to - keep both the code and the comment in
    sync when adding another one.
+
+10. **Change `vk`'s user-facing Markdown/plugin/navigation surface**
+    (a new directive, a new managed plugin, a new frontmatter field
+    `vault_enhance.py`/`vault_check.py` understands, a change to how
+    links/citations/navigation resolve) → also update
+    `modules/features/vk/demo-vault/` (a committed fixture vault, not a
+    build artifact) to demonstrate the change, refresh its own
+    `README.md` feature table, and re-run `vk check` against it (see
+    that `README.md`'s "Trying it live" section for the scratch-
+    `VAULTS_DIR` technique - never point a patched binary at a real
+    `$HOME/Vaults`) before committing. This is the same drift this
+    section exists to prevent generally; `demo-vault/README.md` states
+    the rule too so it's visible without also reading this file.
+

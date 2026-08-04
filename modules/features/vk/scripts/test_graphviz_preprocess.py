@@ -37,6 +37,27 @@ class ProcessTests(unittest.TestCase):
         self.assertIn("Outro.", result)
         self.assertNotIn("{graphviz}", result)
 
+    def test_doc_rel_dir_produces_correct_relative_image_path(self):
+        # Notes always live one category level deep (materials/records/
+        # texts) per vk's flat-per-category convention - a note there
+        # must reference "../assets/graphviz/...", not a staging-root-
+        # relative "assets/graphviz/..." (which would 404 as
+        # "materials/assets/graphviz/..." once MyST resolves it against
+        # the note's own directory). Regression test for the 2026-08 bug
+        # this doc_rel_dir parameter fixes.
+        text = ":::{graphviz}\ndigraph G { a -> b }\n:::\n"
+        result, _written = gp.process(
+            text, self.assets_dir, _ENGINE_BINS,
+            source_path="materials/note.md", doc_rel_dir="materials",
+        )
+        self.assertIn(":::{figure} ../assets/graphviz/", result)
+
+    def test_doc_rel_dir_defaults_to_staging_root(self):
+        text = ":::{graphviz}\ndigraph G { a -> b }\n:::\n"
+        result, _written = gp.process(text, self.assets_dir, _ENGINE_BINS, source_path="note.md")
+        self.assertIn(":::{figure} assets/graphviz/", result)
+        self.assertNotIn("../assets/graphviz/", result)
+
     def test_preserves_surrounding_content_untouched(self):
         text = "# Title\n\nSome *other* [directive](x.md) untouched.\n"
         result, written = gp.process(text, self.assets_dir, _ENGINE_BINS, source_path="note.md")

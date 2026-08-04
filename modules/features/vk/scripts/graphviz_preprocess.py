@@ -37,6 +37,7 @@ and Typst/PDF exports without any Graphviz-specific code downstream.
 
 import argparse
 import hashlib
+import posixpath
 import re
 import subprocess
 import sys
@@ -144,7 +145,7 @@ def _write_svg(staging_assets_dir, svg_text, digest):
 
 
 def _render_block(title, options, body_lines, staging_assets_dir, engine_bins,
-                   source_path, line_no):
+                   source_path, line_no, doc_rel_dir=""):
     engine = options.get("engine", "dot").strip() or "dot"
     dot_source = "\n".join(body_lines).strip("\n")
     if not dot_source.strip():
@@ -161,7 +162,15 @@ def _render_block(title, options, body_lines, staging_assets_dir, engine_bins,
 
     digest = hashlib.sha256((engine + "\0" + dot_source).encode("utf-8")).hexdigest()[:16]
     svg_path = _write_svg(staging_assets_dir, svg_text, digest)
-    rel_path = "assets/graphviz/%s.svg" % digest
+    # `staging_assets_dir` is always <staging-root>/assets, but the note
+    # being rewritten may itself live one level down (materials/records/
+    # texts, per vk's flat-per-category convention) - a bare
+    # "assets/graphviz/..." reference would then resolve relative to the
+    # note's own directory (e.g. "materials/assets/...") and 404. Make the
+    # emitted path relative to the note's directory instead, so it works
+    # whether the note is at the staging root or one category level deep.
+    abs_path = posixpath.join("assets", "graphviz", "%s.svg" % digest)
+    rel_path = posixpath.relpath(abs_path, doc_rel_dir or ".")
 
     attrs = []
     if options.get("label", "").strip():
@@ -181,7 +190,8 @@ def _render_block(title, options, body_lines, staging_assets_dir, engine_bins,
     return "\n".join(out), svg_path
 
 
-def process(text, staging_assets_dir, engine_bins, source_path="<unknown>"):
+def process(text, staging_assets_dir, engine_bins, source_path="<unknown>",
+            doc_rel_dir=""):
     lines = text.split("\n")
     blocks = list(_find_blocks(lines))
     if not blocks:
@@ -194,7 +204,7 @@ def process(text, staging_assets_dir, engine_bins, source_path="<unknown>"):
         out.extend(lines[cursor:start])
         rendered, svg_path = _render_block(
             title, options, body_lines, staging_assets_dir, engine_bins,
-            source_path, start + 1,
+            source_path, start + 1, doc_rel_dir=doc_rel_dir,
         )
         out.append(rendered)
         written.append(svg_path)
@@ -209,6 +219,11 @@ def main(argv=None):
     parser.add_argument("output", help="Destination Markdown file (staging tree)")
     parser.add_argument("--staging-assets-dir", required=True,
                          help="Path to <staging>/assets")
+    parser.add_argument("--doc-rel-dir", default="",
+                         help="Note's directory relative to the staging root "
+                              "(e.g. 'materials'; empty/'.' for the staging "
+                              "root itself) - used to emit a correct relative "
+                              "image path for notes one category level deep.")
     parser.add_argument("--dot", required=True)
     parser.add_argument("--neato", required=True)
     parser.add_argument("--fdp", required=True)
@@ -231,7 +246,8 @@ def main(argv=None):
 
     try:
         result, _written = process(text, args.staging_assets_dir, engine_bins,
-                                    source_path=args.input)
+                                    source_path=args.input,
+                                    doc_rel_dir=args.doc_rel_dir)
     except GraphvizDirectiveError as exc:
         sys.stderr.write("vk: %s\n" % exc.message)
         sys.exit(1)

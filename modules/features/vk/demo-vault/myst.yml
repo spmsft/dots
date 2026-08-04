@@ -1,0 +1,24 @@
+version: 1
+project:
+  title: "vk Demo Vault"
+  toc:
+    - file: index.md
+    - title: Materials
+      children:
+        - pattern: materials/*.md
+    - title: Records
+      children:
+        - pattern: records/*.md
+    - title: Texts
+      children:
+        - pattern: texts/*.md
+  # Consumed by the managed myst-substitutions plugin (auto-injected at
+  # staging time - see vk.nix's vkPluginSubstitutions/vk.sh's
+  # merge_managed_plugins()) - demonstrated in materials/vk-demo-project.md.
+  substitutions:
+    vault_version: "v1.0"
+    maintainer: "spmsft"
+site:
+  template: book-theme
+  options:
+    logo_text: "vk Demo Vault"

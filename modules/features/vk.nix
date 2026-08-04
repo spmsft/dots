@@ -57,6 +57,13 @@ let
   # `nix eval --impure` while implementing vk-enhance-authoring-checks.
   vkScriptsDir = ./vk/scripts;
 
+  # Committed demo/showcase vault (source-controlled fixture, not a build
+  # artifact - see its own README.md) exercising every vk feature. Synced
+  # into a real vault directory by the activation script below so it
+  # shows up in 'vk serve-all'/the hub menu/'vk check all' like any other
+  # vault, without a manual copy step.
+  vkDemoVaultSrc = ./vk/demo-vault;
+
   # Build-input fingerprint: changes whenever any staging-pipeline input
   # (this Nix file, the enhancer script, managed CSS/assets, the plugin
   # bundle) changes, even if no vault source file did - vault_needs_build()
@@ -178,5 +185,25 @@ in
         feature = "features.vk";
       }
     ];
+
+    # Keep the committed demo vault fully in sync with the repo on every
+    # apply-dots: full rm+copy (not a create-if-missing/diff-guarded
+    # merge like imprint.md/the managed CSS above) since this is a
+    # showcase fixture, not user content - any local edits made directly
+    # under this path (e.g. to experiment) are intentionally overwritten
+    # back to the repo's version rather than silently drifting from it.
+    # `cp`/`rm`/`mkdir` are plain coreutils, safe to reference bare on
+    # Home Manager's minimal activation-script PATH (see
+    # features/task-sync.nix's hookTaskrcSync for the PATH gotcha this
+    # avoids by construction). `chmod -R u+w` undoes the Nix store's
+    # read-only permission bits on the copied files, since `vk check`/
+    # `vk watch` need to write a `.vk-staging` tree alongside them.
+    home.activation.vkDemoVault = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      DEMO_DST="${cfg.vaultsDir}/vk-demo-vault"
+      mkdir -p "${cfg.vaultsDir}"
+      rm -rf "$DEMO_DST"
+      cp -r "${vkDemoVaultSrc}" "$DEMO_DST"
+      chmod -R u+w "$DEMO_DST"
+    '';
   };
 }
