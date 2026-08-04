@@ -64,6 +64,29 @@ ensure_main_md() {
     fi
 }
 
+# Helper: ensure a vault has its own agent-instructions file and memory
+# folder - seeded once from VK_VAULT_AGENTS_MD_SRC/never overwritten
+# afterwards (same "only when missing" contract as ensure_main_md()
+# above), so a user/agent is free to grow either one over time without
+# vk ever clobbering it. Mirrors the global $VAULTS_DIR/AGENTS.md +
+# memory-bank/ pair written in serve_all_rebuild(), but per-vault.
+ensure_vault_agents_md() {
+    local path="$1"
+    if [ ! -f "$path/AGENTS.md" ]; then
+        cp "$VK_VAULT_AGENTS_MD_SRC" "$path/AGENTS.md"
+    fi
+    mkdir -p "$path/memory-bank"
+    if [ ! -f "$path/memory-bank/README.md" ]; then
+        cat <<'MBEOF' > "$path/memory-bank/README.md"
+# Memory bank
+
+Durable, agent-relevant context for this vault - recurring themes,
+in-flight projects, conventions specific here. Plain Markdown, no
+frontmatter required. Never overwritten by `vk`; grow it freely.
+MBEOF
+    fi
+}
+
 # Helper: percent-encode the characters in a relative path/filename that
 # are unsafe inside a bare (non-`<...>`-wrapped) CommonMark/MyST link
 # destination - most importantly the literal space, which otherwise
@@ -276,6 +299,7 @@ cd_vault() {
         exit 1
     fi
     ensure_main_md "$path"
+    ensure_vault_agents_md "$path"
     regen_category_indexes "$path"
     cd "$path"
 }
@@ -567,6 +591,31 @@ serve_all_rebuild() {
         cp "$IMPRINT_MD_SRC" "$VAULTS_DIR/imprint.md"
     fi
 
+    # Agent-facing docs for the whole Vaults collection: unlike
+    # imprint.md (user-editable, seeded once), this one is fully
+    # managed - always kept in sync with VK_AGENTS_MD_SRC, the same way
+    # vk-managed.css is below - so an `apply-dots` upgrade that changes
+    # vk's own conventions doesn't leave a stale copy behind. Diff-
+    # guarded so an unchanged result never bumps its own mtime.
+    tmp="$VAULTS_DIR/AGENTS.md.vk-tmp"
+    cat "$VK_AGENTS_MD_SRC" > "$tmp"
+    if ! cmp -s "$tmp" "$VAULTS_DIR/AGENTS.md" 2>/dev/null; then
+        mv -f "$tmp" "$VAULTS_DIR/AGENTS.md"
+    else
+        rm -f "$tmp"
+    fi
+    mkdir -p "$VAULTS_DIR/memory-bank"
+    if [ ! -f "$VAULTS_DIR/memory-bank/README.md" ]; then
+        cat <<'MBEOF' > "$VAULTS_DIR/memory-bank/README.md"
+# Memory bank
+
+Durable, agent-relevant context spanning more than one vault (or about
+the vault collection as a whole). Plain Markdown, no frontmatter
+required. Never overwritten by `vk`; grow it freely. Vault-specific
+context belongs in that vault's own `memory-bank/` instead.
+MBEOF
+    fi
+
     # Same shared visual layer as every vault (see stage_vault()) -
     # written directly here rather than through vault_enhance.py's merge
     # since the hub's myst.yml is fully re-derived from scratch below on
@@ -591,15 +640,17 @@ serve_all_rebuild() {
         [ -n "$name" ] && all_vaults+=("$name")
     done < <(list_vaults)
 
-    # Every top-level *.md file except the generated index.md itself is
-    # a "global page" - built and linked from the root index, in
-    # addition to imprint.md's dedicated footer link. Sorted
+    # Every top-level *.md file except the generated index.md and the
+    # managed AGENTS.md (agent-facing, not meant for the human-facing
+    # hub nav) is a "global page" - built and linked from the root
+    # index, in addition to imprint.md's dedicated footer link. Sorted
     # alphabetically like every other vk listing.
     GLOBAL_PAGES=()
     for f in "$VAULTS_DIR"/*.md; do
         [ -e "$f" ] || continue
         bn=$(basename "$f")
         [ "$bn" = "index.md" ] && continue
+        [ "$bn" = "AGENTS.md" ] && continue
         GLOBAL_PAGES+=("$bn")
     done
     if [ "${#GLOBAL_PAGES[@]}" -gt 0 ]; then
@@ -636,6 +687,11 @@ serve_all_rebuild() {
     # (re)built on the next poll with no manual 'vk build' step.
     for name in "${all_vaults[@]}"; do
         path="$VAULTS_DIR/$name"
+        # Backfill AGENTS.md/memory-bank for any vault that predates this
+        # feature (or was never opened via cd_vault/'vk new') - a no-op
+        # once already present, same "only when missing" contract as
+        # ensure_main_md().
+        ensure_vault_agents_md "$path"
         # Regenerate category listings first (a note added/removed since
         # the last poll counts as "a source file changed" too) - only
         # actually rewrites index.md when content differs, so this alone
@@ -787,6 +843,7 @@ case "${1:-}" in
 
         mkdir -p "$VAULT_PATH"/{texts,materials,records,assets}
         ensure_main_md "$VAULT_PATH"
+        ensure_vault_agents_md "$VAULT_PATH"
         touch "$VAULT_PATH/references.bib"
 
         # 1. Generate Base Index Configuration (categories listed

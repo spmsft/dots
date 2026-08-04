@@ -113,6 +113,8 @@ let
     #!/usr/bin/env bash
     VAULTS_DIR="${cfg.vaultsDir}"
     IMPRINT_MD_SRC="${./vk/imprint.md}"
+    VK_AGENTS_MD_SRC="${./vk/AGENTS.md}"
+    VK_VAULT_AGENTS_MD_SRC="${./vk/vault-agents.md}"
     VK_TASKWARRIOR_LUA="${./vk/filters/taskwarrior.lua}"
     VK_TASKWARRIOR_PREPROCESS="${vkScriptsDir}/taskwarrior_preprocess.py"
     VK_VAULT_ENHANCE="${vkScriptsDir}/vault_enhance.py"

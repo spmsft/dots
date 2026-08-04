@@ -278,6 +278,11 @@ Notable features:
   collector are vendored/pinned (no network access needed to build).
 - Shared Tokyo-Night/solarpunk styling across every vault, with an
   optional per-vault `assets/vk-custom.css` override.
+- **Agent-facing docs** - a managed `AGENTS.md` at `$VAULTS_DIR`'s root
+  (kept in sync on every rebuild) plus a seeded, user-editable
+  `AGENTS.md` + `memory-bank/` in every vault, so a coding agent working
+  in `$VAULTS_DIR` has the shared conventions and a place to keep
+  durable per-vault/cross-vault context.
 
 Configuration:
 ```nix
