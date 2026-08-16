@@ -12,6 +12,7 @@ let
       grabcontext = { enable = cfg.grabcontext; pkg = grabcontext; };
       opencode = { enable = cfg.opencode; pkg = pkgs.opencode; };
       copilot = { enable = cfg.copilot; pkg = pkgs.github-copilot-cli; alienName = "github-copilot-cli"; };
+      herdr = { enable = cfg.herdr; pkg = pkgs.herdr; alienName = "herdr-bin"; };
     };
   };
 
@@ -300,6 +301,7 @@ in
     grabcontext = coreLib.mkDefaultEnabledOption "grabcontext (gather code context for AI) - outputs markdown";
     opencode = coreLib.mkDefaultEnabledOption "opencode (AI coding assistant)";
     copilot = coreLib.mkDefaultDisabledOption "GitHub Copilot CLI";
+    herdr = coreLib.mkDefaultDisabledOption "herdr (terminal multiplexer/agent-fleet manager for AI coding agents - herdr.dev)";
     # Deliberately no `default = true` here even though the suite itself
     # defaults enabled where used - pi is a heavier/more opinionated
     # terminal agent than opencode, so it stays strictly opt-in even when

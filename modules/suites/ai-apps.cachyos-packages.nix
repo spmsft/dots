@@ -23,6 +23,12 @@ graphify = {
     };
   };
 
+  herdr-bin = {
+    packages = {
+      paru = [ "herdr-bin" ];
+    };
+  };
+
   # FUSE2 support for AppImages
   appimages-fuse = {
     packages = {
