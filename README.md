@@ -230,6 +230,40 @@ features.viewer = {
 
 **Multi-file behavior:** Multiple files default to continuous mode (streaming). Interactive tools (mpv, glow -t) only work with single files or `-p` flag.
 
+### `mk-lean` - Lean 4 Project Scaffolding (suites.dev-tools.lean)
+
+Scaffolds a new Lean 4 project from a starter template with a
+formal-semantics-oriented dependency set pre-declared (Batteries, Aesop,
+Qq, CSLib - no Mathlib). Requires `suites.dev-tools.lean` (on by
+default), which installs `elan` (Lean's rustup-equivalent toolchain
+manager) - real Lean projects, and every dependency above, pin their own
+Lean version via a `lean-toolchain` file, so `elan` (not a bare nixpkgs
+`lean4` package) is what transparently resolves the right one per
+project.
+
+```bash
+mk-lean my-project
+cd my-project
+lake update   # fetches the pinned deps; elan fetches the matching Lean toolchain
+lake build
+```
+
+Helix 25.07.1+ already ships a working Lean language server out of the
+box (`hx --health lean`) - no `languages.toml` changes needed, `elan`
+just needs to put `lake`/`lean` on PATH. See the template's own
+`README.md` for editor caveats and toolchain-mismatch troubleshooting.
+
+Helix has no InfoView-equivalent (goal-state panel) - enable
+`suites.dev-tools.leanHelixView` (off by default) for a terminal-native
+goal/diagnostics viewer ([lean-helix-view](https://github.com/wyattgill9/lean-helix-view),
+packaged in `pkgs/lean-helix-view.nix`): it wraps `lake serve` in a
+transparent proxy so a `lean-helix-view watch` side-pane (tmux/zellij)
+can show goals as you edit. Requires the `language-server.lean`
+override in `~/.config/helix/languages.toml` (see
+`settings/chromaden/home/.config/helix/languages.toml` for the
+reference config) to point at the proxy instead of `lake serve`
+directly.
+
 ### `vk` - Terminal Wiki & Zettelkasten Engine (vk)
 
 Terminal-first, multi-vault note-taking system built on `gum` (prompts),

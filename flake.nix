@@ -101,6 +101,7 @@
            });
            external.quarkdown = prev.callPackage ./pkgs/quarkdown.nix {};
            external.lazytask = prev.callPackage ./pkgs/lazytask.nix {};
+           external.lean-helix-view = prev.callPackage ./pkgs/lean-helix-view.nix {};
            # cudaSupport gated on dotsLocal.gpu == "nvidia" ("build only
            # cuda when available" per user request) - mirrors rules.nix's
            # existing gpu axis convention (llama-cpp.enable/ai-apps' "pi"

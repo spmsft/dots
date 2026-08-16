@@ -28,6 +28,8 @@ let
       mkdir -p "$out/bin"
       ln -s "${pkgs.luajit}/bin/luajit" "$out/bin/luajit"
     '';
+
+  leanStarterSrc = ../features/lean/lean-starter;
 in
 {
   options.suites.dev-tools = {
@@ -85,6 +87,28 @@ in
 
     # Haskell tooling
     haskell = coreLib.mkDefaultDisabledOption "Haskell toolchain (ghc, cabal, stack)";
+
+    # Lean 4 tooling. `elan` (the rustup-equivalent version manager) is
+    # installed rather than a bare pkgs.lean4 - real Lean projects pin
+    # their own toolchain via a `lean-toolchain` file (especially once
+    # they depend on Batteries/Aesop/Mathlib/etc., each of which pins
+    # its own version), and elan transparently fetches/switches to the
+    # right one per-project. Helix 25.07.1 already ships a working Lean
+    # `language-server.lean = { command = "lake", args = ["serve"] }`
+    # entry out of the box (see `hx --health lean`) - elan only needs
+    # to put `lake`/`lean` themselves on PATH, no languages.toml
+    # customization is required. See `mk-lean` below for a starter
+    # project template (Batteries/Aesop/Qq/CSLib pre-declared).
+    lean = coreLib.mkDefaultEnabledOption "Lean 4 toolchain (elan)";
+
+    # lean-helix-view: terminal-native Lean goal/diagnostics viewer for
+    # Helix (which has no InfoView-equivalent) - a transparent `lake
+    # serve` proxy plus a ratatui side-pane viewer. Packaged in
+    # pkgs/lean-helix-view.nix (not in nixpkgs). Off by default since it
+    # requires a manual languages.toml LSP-command override (see
+    # settings/chromaden/home/.config/helix/languages.toml) and a
+    # separate tmux/zellij pane to actually show anything.
+    leanHelixView = coreLib.mkDefaultDisabledOption "lean-helix-view (terminal Lean goal/diagnostics viewer for Helix)";
     
     # HMR tooling
     entr = coreLib.mkDefaultEnabledOption "entr (file watcher for auto-rebuilds)";
@@ -129,13 +153,34 @@ in
       (lib.mkIf cfg.haskell ghc)
       (lib.mkIf cfg.haskell cabal-install)
       (lib.mkIf cfg.haskell stack)
+      (lib.mkIf cfg.lean elan)
+      (lib.mkIf cfg.leanHelixView external.lean-helix-view)
       (lib.mkIf cfg.entr entr)
       (lib.mkIf cfg.lua lua5_4)
       (lib.mkIf cfg.luajit luajitNoLuaSymlink)
       (lib.mkIf cfg.egglog egglog)
       (lib.mkIf cfg.steel steel)
       (lib.mkIf cfg.prettier prettier)
-    ]) ++ appSet.packages;
+    ]) ++ appSet.packages
+      ++ lib.optional cfg.lean (pkgs.writeShellScriptBin "mk-lean" ''
+        #!/usr/bin/env bash
+        # mk-lean - scaffold a new Lean 4 project from the lean-starter
+        # template (Batteries/Aesop/Qq/CSLib pre-declared).
+        # Usage: mk-lean <target-dir>
+        set -e
+        if [ -z "$1" ]; then
+          echo "Usage: mk-lean <target-dir>" >&2
+          exit 1
+        fi
+        TARGET="$1"
+        if [ -e "$TARGET" ]; then
+          echo "mk-lean: '$TARGET' already exists" >&2
+          exit 1
+        fi
+        cp -r ${leanStarterSrc} "$TARGET"
+        chmod -R u+w "$TARGET"
+        echo "Created $TARGET from lean-starter. Next: cd $TARGET && lake update && lake build"
+      '');
 
     alienPackages.enabledPackages = appSet.alienEnabled;
 

@@ -1,0 +1,32 @@
+name = "lean-starter"
+defaultTargets = ["LeanStarter"]
+
+# Batteries: general-purpose stdlib extensions (near-universal dep).
+[[require]]
+name = "batteries"
+scope = "leanprover-community"
+
+# Aesop: proof-automation framework - useful well beyond math proofs.
+[[require]]
+name = "aesop"
+scope = "leanprover-community"
+
+# Qq: quasiquotation/metaprogramming - handy for embedding DSLs and
+# building custom semantics frameworks.
+[[require]]
+name = "Qq"
+scope = "leanprover-community"
+
+# CSLib: the CS-focused counterpart to Mathlib - operational/labelled
+# transition semantics, automata, process calculi. Closest fit for
+# formal-semantics/specification work (not math-heavy).
+[[require]]
+name = "cslib"
+scope = "leanprover"
+
+[[lean_lib]]
+name = "LeanStarter"
+
+[[lean_exe]]
+name = "lean-starter"
+root = "Main"

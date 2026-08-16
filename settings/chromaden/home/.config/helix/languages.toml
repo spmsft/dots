@@ -42,3 +42,18 @@ command = "lemminx"
 name = "json"
 formatter = { command = "prettier", args = ["--parser", "json"] }
 auto-format = true
+
+# --- Lean 4 Setup ---
+# Wrap Helix's built-in `lake serve` invocation in lean-helix-view's
+# transparent proxy, so a `lean-helix-view` side-pane (tmux/zellij, run
+# separately from the Lean project root) can show goals/diagnostics -
+# Helix itself has no InfoView-equivalent. See
+# https://github.com/wyattgill9/lean-helix-view. Requires
+# suites.dev-tools.leanHelixView (this repo's Nix packaging of it).
+[language-server.lean]
+command = "lean-helix-view"
+args = ["proxy", "--", "lake", "serve"]
+
+[[language]]
+name = "lean"
+language-servers = [ "lean" ]
