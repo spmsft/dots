@@ -235,6 +235,13 @@ in
         # direnv .envrc + flake.nix dev shell for elan/lake/git), then
         # resolve dependencies and sync the toolchain so it builds
         # cleanly out of the box.
+        #
+        # The project/module name is auto-derived from the target
+        # directory's basename: a kebab-case project name (used for
+        # the lakefile/executable) and a PascalCase module name (used
+        # for the library root module, e.g. "graph-types" ->
+        # "GraphTypes"), replacing every "lean-starter"/"LeanStarter"
+        # occurrence in the scaffolded template accordingly.
         # Usage: mk-lean <target-dir>
         set -e
         if [ -z "$1" ]; then
@@ -246,9 +253,22 @@ in
           echo "mk-lean: '$TARGET' already exists" >&2
           exit 1
         fi
+        BASENAME=$(basename "$TARGET")
+        PROJECT_NAME=$(printf '%s' "$BASENAME" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed -E 's/-+/-/g; s/^-+//; s/-+$//')
+        MODULE_NAME=$(printf '%s' "$PROJECT_NAME" | awk -F'-' '{out=""; for (i=1;i<=NF;i++) { if (length($i) > 0) out = out toupper(substr($i,1,1)) substr($i,2) } print out}')
+        if [ -z "$PROJECT_NAME" ] || ! printf '%s' "$MODULE_NAME" | grep -qE '^[A-Za-z][A-Za-z0-9]*$'; then
+          echo "mk-lean: couldn't derive a valid Lean module name from '$BASENAME' - pick a target directory name starting with a letter (e.g. 'graph-types')" >&2
+          exit 1
+        fi
         cp -r ${leanStarterSrc} "$TARGET"
         chmod -R u+w "$TARGET"
-        echo "Created $TARGET from lean-starter. Resolving dependencies (lake update)..."
+        (
+          cd "$TARGET"
+          mv LeanStarter.lean "$MODULE_NAME.lean"
+          mv LeanStarter "$MODULE_NAME"
+          grep -rlZ -e LeanStarter -e lean-starter . | xargs -0 -r sed -i "s/LeanStarter/$MODULE_NAME/g; s/lean-starter/$PROJECT_NAME/g"
+        )
+        echo "Created $TARGET ($MODULE_NAME) from lean-starter. Resolving dependencies (lake update)..."
         (
           cd "$TARGET"
           lake update
