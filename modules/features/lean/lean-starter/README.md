@@ -53,9 +53,23 @@ in your `dots-local`). When enabled:
 2. Run `lean-helix-view watch` in a separate tmux/zellij pane from the
    project root to see goals/diagnostics as you edit in Helix.
 
+## Agent-assisted formalization workflow
+
+This template also scaffolds a workflow for AI-agent-assisted formal
+semantics work: **[`AGENT.md`](AGENT.md)** is the entry point (project
+principles, change classification, proof-failure policy, session
+checklists), `agents/` has one file per role (semantic architect / Lean
+encoder / proof engineer / reviewer), `memory-bank/` is durable
+session-spanning state (current focus, assumptions, theorem roadmap,
+semantic model, review findings), and `docs/architecture/` +
+`docs/tooling/` hold longer-lived design decisions/open questions and
+tooling recommendations. Point any agent at `AGENT.md` first.
+
 ## Layout
 
 - `lakefile.toml` - project + dependency manifest
 - `lean-toolchain` - pinned Lean release (elan reads this)
 - `LeanStarter.lean` / `LeanStarter/` - library root and submodules
 - `Main.lean` - executable entry point (`lean-exe` target)
+- `AGENT.md`, `agents/`, `memory-bank/`, `docs/` - agent-assisted
+  formalization workflow (see above)
