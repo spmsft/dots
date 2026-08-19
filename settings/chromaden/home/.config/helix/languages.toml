@@ -29,6 +29,13 @@ injection-regex = "md|markdown"
 file-types = ["md", "markdown"]
 roots = [".marksman.json", ".garden", ".obsidian"]
 language-servers = [ "markdown-oxide" ]
+auto-format = true
+# mdformat + mdformat-myst (see suites.dev-tools.markdownFormat) - a
+# MyST-aware formatter, not a plain CommonMark one. This matters for
+# vk vaults: mdformat-myst understands MyST directives/roles/dollar-math/
+# frontmatter/footnotes and formats them correctly instead of mangling
+# them like a bare prettier/remark markdown formatter would.
+formatter = { command = "mdformat", args = ["-"] }
 
 [[language]]
 name = "xml"

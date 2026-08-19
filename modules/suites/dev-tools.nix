@@ -30,6 +30,33 @@ let
     '';
 
   leanStarterSrc = ../features/lean/lean-starter;
+
+  # mdformat + mdformat-myst, bundled into one Python env so mdformat's
+  # plugin auto-discovery (entry points) picks up the MyST target spec
+  # automatically. mdformat-myst only understands MyST's *backtick*
+  # fence directive syntax though - it corrupts colon-fenced directives
+  # (`:::{name}`, the form our vaults actually use throughout, e.g.
+  # demo-vault/texts/vk-demo-guide.md's tab-set/grid/card blocks) by
+  # escaping the brace (see executablebooks/mdformat-myst#13, an
+  # unfixed upstream gap). mdformat-vk.py wraps plain mdformat, shields
+  # every colon-fenced block (using the exact same nesting rule
+  # mdit-py-plugins' colon_fence rule itself uses) before formatting
+  # and splices each one back in verbatim afterwards - see that file's
+  # own docstring. Exposed under the name `mdformat` itself (not
+  # `mdformat-vk`) so languages.toml's `formatter = { command =
+  # "mdformat"; ... }` doesn't need to know about the wrapper.
+  mdformatEnv = pkgs.python3.withPackages (ps: [ ps.mdformat ps.mdformat-myst ]);
+  mdformatMyst = pkgs.runCommand "mdformat-vk"
+    { meta = mdformatEnv.meta; }
+    ''
+      mkdir -p "$out/bin"
+      cat > "$out/bin/mdformat" <<EOF
+      #!${pkgs.runtimeShell}
+      export MDFORMAT_VK_REAL_BIN="${mdformatEnv}/bin/mdformat"
+      exec "${mdformatEnv}/bin/python3" "${./mdformat-vk.py}" "\$@"
+      EOF
+      chmod +x "$out/bin/mdformat"
+    '';
 in
 {
   options.suites.dev-tools = {
@@ -84,6 +111,13 @@ in
 
     # XML tooling
     xml = coreLib.mkDefaultEnabledOption "XML toolchain";
+
+    # Markdown formatter for Helix (see languages.toml's markdown
+    # `formatter` entry). mdformat-myst (not a generic CommonMark
+    # formatter like prettier) is MyST-aware - it understands
+    # directives, roles, dollar-math, frontmatter and footnotes, which
+    # matters for vk vaults specifically but applies to any Markdown.
+    markdownFormat = coreLib.mkDefaultEnabledOption "mdformat + mdformat-myst (MyST-aware Markdown formatter for Helix)";
 
     # Haskell tooling
     haskell = coreLib.mkDefaultDisabledOption "Haskell toolchain (ghc, cabal, stack)";
@@ -149,6 +183,7 @@ in
       (lib.mkIf cfg.python ruff)
       (lib.mkIf cfg.uv uv)
       (lib.mkIf cfg.xml lemminx)
+      (lib.mkIf cfg.markdownFormat mdformatMyst)
       (lib.mkIf cfg.snippetsLs external.snippets-ls)
       (lib.mkIf cfg.haskell ghc)
       (lib.mkIf cfg.haskell cabal-install)

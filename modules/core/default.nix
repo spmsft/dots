@@ -105,6 +105,38 @@ home.packages = with pkgs; [
     btop                              # Resource monitor
     pinentry-tty                      # TTY-based pinentry for GPG
     # msgvault                        # Search old email
+  ] ++ [
+    # Helix has no built-in way to persist a theme picked interactively
+    # via `:theme <name>` - it's session-only, and the only real
+    # persistence mechanism is editing config.toml's static `theme =`
+    # line by hand. hx-set-theme does that edit for you.
+    (pkgs.writeShellScriptBin "hx-set-theme" ''
+      #!/usr/bin/env bash
+      # hx-set-theme <name> - persist a Helix theme choice into
+      # ~/.config/helix/config.toml's `theme = "..."` line, so it
+      # survives the next `hx` launch (Helix's own `:theme` command
+      # only changes the theme for the running session).
+      set -euo pipefail
+      CONFIG="$HOME/.config/helix/config.toml"
+      if [ -z "''${1:-}" ]; then
+        echo "Usage: hx-set-theme <theme-name>" >&2
+        if [ -f "$CONFIG" ]; then
+          CURRENT=$(grep -m1 '^theme[[:space:]]*=' "$CONFIG" || true)
+          [ -n "$CURRENT" ] && echo "Current: $CURRENT" >&2
+        fi
+        exit 1
+      fi
+      NAME="$1"
+      mkdir -p "$(dirname "$CONFIG")"
+      touch "$CONFIG"
+      if grep -q '^theme[[:space:]]*=' "$CONFIG"; then
+        sed -i "s/^theme[[:space:]]*=.*/theme = \"$NAME\"/" "$CONFIG"
+      else
+        { echo "theme = \"$NAME\""; cat "$CONFIG"; } > "$CONFIG.tmp"
+        mv "$CONFIG.tmp" "$CONFIG"
+      fi
+      echo "Persisted theme \"$NAME\" to $CONFIG (run ':theme $NAME' in a running hx to preview now; new instances pick it up automatically)."
+    '')
   ];
   
   home.stateVersion = "26.05"; 
