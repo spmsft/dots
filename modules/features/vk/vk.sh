@@ -35,18 +35,43 @@ list_vaults() {
     done | sort
 }
 
+# Persisted "last vault used" - written by remember_vault()/read by
+# get_vault() so the next prompt pre-selects it (Enter alone re-picks
+# it, via gum choose's own --selected flag). Uses XDG_STATE_HOME rather
+# than $VAULTS_DIR itself since this is vk's own UI state, not vault
+# content.
+VK_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/vk"
+VK_LAST_VAULT_FILE="$VK_STATE_DIR/last-vault"
+
+remember_vault() {
+    local name="$1"
+    [ -z "$name" ] && return 0
+    mkdir -p "$VK_STATE_DIR"
+    printf '%s' "$name" > "$VK_LAST_VAULT_FILE"
+}
+
+last_vault() {
+    [ -f "$VK_LAST_VAULT_FILE" ] && cat "$VK_LAST_VAULT_FILE"
+}
+
 # Helper: Ensure vault argument or select interactively via gum.
 get_vault() {
     local name="${1:-}"
     if [ -z "$name" ]; then
-        local vaults
+        local vaults last
         vaults=$(list_vaults)
         if [ -n "$vaults" ]; then
-            name=$(echo "$vaults" | "$GUM_BIN" choose --header "Select target vault:")
+            last=$(last_vault)
+            if [ -n "$last" ] && echo "$vaults" | grep -qxF "$last"; then
+                name=$(echo "$vaults" | "$GUM_BIN" choose --header "Select target vault:" --selected "$last")
+            else
+                name=$(echo "$vaults" | "$GUM_BIN" choose --header "Select target vault:")
+            fi
         else
             name=$("$GUM_BIN" input --placeholder "No vaults found. Enter name for a new vault:")
         fi
     fi
+    [ -n "$name" ] && remember_vault "$name"
     echo "$name"
 }
 
@@ -317,6 +342,8 @@ cd_vault() {
 parse_serve_flags() {
     PORT="5050"
     BIND="127.0.0.1"
+    SERVE=0
+    ALL=0
     POSITIONAL=()
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -341,6 +368,20 @@ parse_serve_flags() {
                 # exposing the server on every network interface,
                 # overriding the loopback-only default above.
                 BIND="0.0.0.0"
+                shift
+                ;;
+            --serve)
+                # Also start a dufs server after building (single-vault:
+                # serves that vault's own site; --all: serves the whole
+                # multi-vault hub, same as legacy serve-all/watch-all).
+                SERVE=1
+                shift
+                ;;
+            --all)
+                # Scope 'build'/'watch' to every vault (+ the Vaults-root
+                # hub page) instead of a single one - no vault
+                # prompt/argument in this mode.
+                ALL=1
                 shift
                 ;;
             *)
@@ -759,7 +800,7 @@ MBEOF
     # Symlink each built vault's staged _build/html into the just-built
     # root _build/html, named after the vault itself (so "/<vault-name>/"
     # serves it directly, no extra path segment needed). This runs every
-    # ~3s from serve-all's poll loop while dufs is concurrently serving
+    # ~1s from watch-all's poll loop while dufs is concurrently serving
     # requests, so it must never leave a name momentarily missing: swap
     # each symlink in with "create under a temp name, then mv onto the
     # real name" (mv is an atomic rename on the same filesystem), rather
@@ -802,10 +843,20 @@ Usage:
                                              Bibentry/Link/Page (interactive)
   vk search [vault|all]                     Substring-search one vault, or every vault at once
   vk rename [old] [new]                     Rename a vault (dir + baked-in title strings)
-  vk watch [vault] [-p|--port PORT] [-b|--bind ADDR] [-0|--public]
-                                             Live MyST preview + dufs server
-  vk build [vault] [-p|--port PORT] [-b|--bind ADDR] [-0|--public]
-                                             Build the vault's static HTML site with MyST
+  vk build [vault] [--serve] [--all] [-p|--port PORT] [-b|--bind ADDR] [-0|--public]
+                                             Build a static HTML site with MyST (one vault, or
+                                             every vault + the Vaults-root hub with --all).
+                                             --serve also starts a dufs server on it afterwards.
+  vk watch [vault] [--serve] [--all] [-p|--port PORT] [-b|--bind ADDR] [-0|--public]
+                                             Like build, but keeps rebuilding on every source
+                                             change until Ctrl+C. --serve additionally starts a
+                                             live-reloading server (single-vault: MyST's own dev
+                                             server; --all: dufs, polling-refreshed).
+  vk watch-all [-p|--port PORT] [-b|--bind ADDR] [-0|--public]
+                                             Sugar for 'vk watch --all --serve'
+  vk serve-all [-p|--port PORT] [-b|--bind ADDR] [-0|--public]
+                                             Sugar for 'vk build --all --serve' (one-shot build,
+                                             no watch loop - use watch-all for that)
   vk export [vault] [file] [--format pdf|typst]
                                              Export one note (or the whole vault's exports:
                                              frontmatter) to a PDF or Typst bundle
@@ -813,16 +864,16 @@ Usage:
                                              + static checks (frontmatter, links, assets,
                                              directives, Graphviz DOT). --external also checks
                                              external links resolve (slower, needs network)
-  vk serve-all [-p|--port PORT] [-b|--bind ADDR] [-0|--public]
-                                             Host all vaults at once: / lists them, /<vault> serves it
   vk help | -h | --help                     Show this message
 
-[vault] may be omitted anywhere it's accepted - vk will prompt via gum.
--p/--port and -b/--bind (aliases: --host) are passed straight through to
-dufs; both may also be given as --port=VALUE/--bind=VALUE, in any order,
-before or after the vault name. Left unset, vk defaults to port 5050,
-bind 127.0.0.1 (loopback-only). Pass -0/--public as a quick shorthand
-for -b/--bind 0.0.0.0, to expose it on every network interface instead.
+[vault] may be omitted anywhere it's accepted - vk will prompt via gum,
+pre-selecting whichever vault you last used (across any command) so
+Enter alone re-picks it. -p/--port and -b/--bind (aliases: --host) are
+passed straight through to dufs; both may also be given as
+--port=VALUE/--bind=VALUE, in any order, before or after the vault name.
+Left unset, vk defaults to port 5050, bind 127.0.0.1 (loopback-only).
+Pass -0/--public as a quick shorthand for -b/--bind 0.0.0.0, to expose it
+on every network interface instead.
 USAGEEOF
 }
 
@@ -1170,9 +1221,52 @@ $META_BLOCK"
     watch)
         shift
         parse_serve_flags "$@"
+
+        if [ "$ALL" = "1" ]; then
+            if [ "$SERVE" = "1" ]; then
+                # watch-all (full combo): build+watch+serve every vault
+                # at once - real watching (poll-based, same mechanism as
+                # legacy serve-all) instead of a one-shot build.
+                build_dufs_args
+                serve_all_rebuild 0
+                echo "👀 Watching $VAULTS_DIR for changes across every vault..."
+                (
+                    while true; do
+                        sleep 1
+                        serve_all_rebuild 1
+                    done
+                ) &
+                REBUILD_LOOP_PID=$!
+                trap 'kill "$REBUILD_LOOP_PID" 2>/dev/null || true' EXIT
+                echo "⚡ Watching+serving all vaults at $(dufs_url)"
+                echo "Access paths via: $(dufs_url)/<vault-name>/"
+                "$DUFS_BIN" "$VAULTS_DIR/_build/html" --render-index --allow-symlink -A "${DUFS_ARGS[@]}"
+            else
+                # build+watch, every vault, no server.
+                echo "👀 Watching $VAULTS_DIR for changes across every vault (no server - Ctrl+C to stop)..."
+                while true; do
+                    serve_all_rebuild 1
+                    sleep 1
+                done
+            fi
+            exit 0
+        fi
+
         VAULT_NAME=$(get_vault "${POSITIONAL[0]:-}")
         cd_vault "$VAULT_NAME"
         stage_vault "$PWD"
+
+        if [ "$SERVE" != "1" ]; then
+            # build+watch, single vault, no server - just keep the
+            # staging tree + static build up to date on every change.
+            echo "👀 Watching $VAULT_NAME for changes (no server - Ctrl+C to stop)..."
+            while true; do
+                stage_vault "$PWD"
+                myst_build "$PWD" "" --html >/dev/null 2>&1 || echo "⚠ Build failed - see 'vk build $VAULT_NAME' for details" >&2
+                sleep 1
+            done
+            exit 0
+        fi
 
         # `myst build --html --watch` does NOT actually watch/rebuild on
         # change (MyST itself prints "Site content will not be watched
@@ -1215,14 +1309,39 @@ $META_BLOCK"
         wait "$MYST_PID"
         ;;
 
+    watch-all)
+        shift
+        # Sugar for `watch --all --serve` (see that case) - kept as its
+        # own top-level command since it's also the interactive hub's
+        # "watch-all" entry.
+        exec "$0" watch --all --serve "$@"
+        ;;
+
     build)
         shift
         parse_serve_flags "$@"
-        VAULT_NAME=$(get_vault "${POSITIONAL[0]:-}")
-        cd_vault "$VAULT_NAME"
-        stage_vault "$PWD"
-        myst_build "$PWD" "" --html
-        echo "✓ Built $VAULT_NAME at $PWD/.vk-staging/_build/html"
+
+        if [ "$ALL" = "1" ]; then
+            serve_all_rebuild 0
+            TARGET_DIR="$VAULTS_DIR/_build/html"
+            echo "✓ Built all vaults at $TARGET_DIR"
+        else
+            VAULT_NAME=$(get_vault "${POSITIONAL[0]:-}")
+            cd_vault "$VAULT_NAME"
+            stage_vault "$PWD"
+            myst_build "$PWD" "" --html
+            TARGET_DIR="$PWD/.vk-staging/_build/html"
+            echo "✓ Built $VAULT_NAME at $TARGET_DIR"
+        fi
+
+        if [ "$SERVE" = "1" ]; then
+            build_dufs_args
+            echo "⚡ Serving $TARGET_DIR at $(dufs_url)"
+            if [ "$ALL" = "1" ]; then
+                echo "Access paths via: $(dufs_url)/<vault-name>/"
+            fi
+            "$DUFS_BIN" "$TARGET_DIR" --render-index --allow-symlink -A "${DUFS_ARGS[@]}"
+        fi
         ;;
 
     export)
@@ -1413,23 +1532,11 @@ $META_BLOCK"
 
     serve-all)
         shift
-        parse_serve_flags "$@"
-        build_dufs_args
-
-        serve_all_rebuild
-        echo "👀 Watching $VAULTS_DIR for global page/asset changes and newly built vaults..."
-        (
-            while true; do
-                sleep 3
-                serve_all_rebuild 1
-            done
-        ) &
-        REBUILD_LOOP_PID=$!
-        trap 'kill "$REBUILD_LOOP_PID" 2>/dev/null || true' EXIT
-
-        echo "⚡ Active multi-vault core instance running at $(dufs_url)"
-        echo "Access paths via: $(dufs_url)/<vault-name>/"
-        "$DUFS_BIN" "$VAULTS_DIR/_build/html" --render-index --allow-symlink -A "${DUFS_ARGS[@]}"
+        # Sugar for `build --all --serve` (see that case) - a one-shot
+        # build then static serve, no ongoing watch loop (use `watch-all`
+        # for that). Kept as its own top-level command since it's also
+        # the interactive hub's "serve-all" entry.
+        exec "$0" build --all --serve "$@"
         ;;
 
     *)
@@ -1438,9 +1545,27 @@ $META_BLOCK"
             print_usage >&2
             exit 1
         fi
-        echo "Interactive CLI Management Hub"
-        ACTION=$("$GUM_BIN" choose "new (Create Vault)" "note (CRUD Operations)" "search (Find Across Vaults)" "rename (Rename Vault)" "check (Validate Vault)" "watch (Live Edit Preview)" "serve-all (Host Hub)")
-        CMD=$(echo "$ACTION" | cut -d' ' -f1)
-        exec "$0" "$CMD"
+        # Interactive hub: a plain loop (never `exec`s into a
+        # subcommand) so cancelling/finishing anything - at any depth -
+        # simply returns here instead of exiting the whole session.
+        # Ctrl+C/Esc on the hub's own menu (caught by the `|| break`
+        # below) is the one true "quit" out of this loop.
+        while true; do
+            ACTION=$("$GUM_BIN" choose --header "vk - Interactive CLI Management Hub" \
+                "search (Find Across Vaults)" \
+                "note (Create/Edit/Rename/Delete Notes)" \
+                "vault (New / Rename / Check a Vault)" \
+                "watch-all (Live Preview - All Vaults)" \
+                "serve-all (Host Built Vaults)") || break
+            CMD=$(echo "$ACTION" | cut -d' ' -f1)
+            if [ "$CMD" = "vault" ]; then
+                SUB=$("$GUM_BIN" choose --header "Vault:" \
+                    "new (Create Vault)" \
+                    "rename (Rename Vault)" \
+                    "check (Validate Vault)") || continue
+                CMD=$(echo "$SUB" | cut -d' ' -f1)
+            fi
+            "$0" "$CMD" || true
+        done
         ;;
 esac
