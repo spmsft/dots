@@ -52,6 +52,16 @@ let
     fi
   '';
 
+  # Shared by mk-lean and update-lean: (re)lock the project's own
+  # flake.nix (elan/lake/git dev shell - see lean-starter/flake.nix's
+  # own comment) so direnv's `use flake` has a real flake.lock to pin
+  # to, rather than re-resolving nixpkgs on every `direnv allow`.
+  leanFlakeLockSnippet = ''
+    if [ -f flake.nix ]; then
+      nix flake lock --extra-experimental-features 'nix-command flakes' >/dev/null 2>&1 || true
+    fi
+  '';
+
   # mdformat + mdformat-myst, bundled into one Python env so mdformat's
   # plugin auto-discovery (entry points) picks up the MyST target spec
   # automatically. mdformat-myst only understands MyST's *backtick*
@@ -221,9 +231,10 @@ in
       ++ lib.optional cfg.lean (pkgs.writeShellScriptBin "mk-lean" ''
         #!/usr/bin/env bash
         # mk-lean - scaffold a new Lean 4 project from the lean-starter
-        # template (Batteries/Aesop/Qq/CSLib pre-declared), then resolve
-        # dependencies and sync the toolchain so it builds cleanly out
-        # of the box.
+        # template (Batteries/Aesop/Qq/CSLib pre-declared, plus a
+        # direnv .envrc + flake.nix dev shell for elan/lake/git), then
+        # resolve dependencies and sync the toolchain so it builds
+        # cleanly out of the box.
         # Usage: mk-lean <target-dir>
         set -e
         if [ -z "$1" ]; then
@@ -242,9 +253,11 @@ in
           cd "$TARGET"
           lake update
           ${leanToolchainSyncSnippet}
+          ${leanFlakeLockSnippet}
         )
         LEAN_TOOLCHAIN=$(cat "$TARGET/lean-toolchain" 2>/dev/null || echo "(unknown)")
-        echo "✓ $TARGET is ready on $LEAN_TOOLCHAIN. Next: cd $TARGET && lake exe cache get && lake build"
+        echo "✓ $TARGET is ready on $LEAN_TOOLCHAIN."
+        echo "Next: cd $TARGET && direnv allow && lake exe cache get && lake build"
       '')
       ++ lib.optional cfg.lean (pkgs.writeShellScriptBin "update-lean" ''
         #!/usr/bin/env bash
@@ -265,6 +278,7 @@ in
           cd "$TARGET"
           lake update
           ${leanToolchainSyncSnippet}
+          ${leanFlakeLockSnippet}
         )
         LEAN_TOOLCHAIN=$(cat "$TARGET/lean-toolchain" 2>/dev/null || echo "(unknown)")
         echo "✓ Updated $TARGET, now on $LEAN_TOOLCHAIN. Next: cd $TARGET && lake exe cache get && lake build"
