@@ -1570,17 +1570,17 @@ $META_BLOCK"
         # below) is the one true "quit" out of this loop.
         while true; do
             ACTION=$("$GUM_BIN" choose --header "vk - Interactive CLI Management Hub" \
-                "search (Search a Vault, or All Vaults)" \
-                "note (Create/Edit/Rename/Delete Notes)" \
-                "vault (New / Rename / Check a Vault)" \
-                "watch-all (Live Preview - All Vaults)" \
-                "serve-all (Host Built Vaults)") || break
+                "search (Search a Vault or All Vaults)" \
+                "note (Create/Edit/Rename/Delete a Note)" \
+                "vault (Create/Rename/Check a Vault)" \
+                "watch-all (Live-Preview All Vaults)" \
+                "serve-all (Host All Vaults)") || break
             CMD=$(echo "$ACTION" | cut -d' ' -f1)
             if [ "$CMD" = "vault" ]; then
                 SUB=$("$GUM_BIN" choose --header "Vault:" \
-                    "new (Create Vault)" \
-                    "rename (Rename Vault)" \
-                    "check (Validate Vault)") || continue
+                    "new (Create a Vault)" \
+                    "rename (Rename a Vault)" \
+                    "check (Validate a Vault)") || continue
                 CMD=$(echo "$SUB" | cut -d' ' -f1)
             fi
             "$0" "$CMD" || true
