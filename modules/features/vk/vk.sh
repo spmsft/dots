@@ -43,6 +43,12 @@ list_vaults() {
 VK_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/vk"
 VK_LAST_VAULT_FILE="$VK_STATE_DIR/last-vault"
 
+# Persisted "last search mode" (fuzzy|substring) - same remember/
+# pre-select pattern as the vault picker above, so search_content()'s
+# mode toggle only takes one keypress (Enter to keep, one arrow+Enter
+# to switch) instead of having to pick a mode from scratch every time.
+VK_SEARCH_MODE_FILE="$VK_STATE_DIR/search-mode"
+
 remember_vault() {
     local name="$1"
     [ -z "$name" ] && return 0
@@ -410,20 +416,33 @@ dufs_url() {
     echo "http://${BIND:-127.0.0.1}:${PORT:-5050}"
 }
 
-# Helper: substring/fuzzy content search over $1 (a directory - either "."
-# from inside an already-cd'd vault, or $VAULTS_DIR for a global,
-# cross-vault search), shared by 'vk search' and 'vk note's "Fuzzy Search
-# Text". Passing the search root straight to rg (rather than cd-ing into
-# it) means the paths rg prints are always valid from the caller's cwd -
-# required for the global case, which runs before any cd_vault.
+# Helper: fuzzy/substring content search over $1 (a directory - either
+# "." from inside an already-cd'd vault, or $VAULTS_DIR for a global,
+# cross-vault search), shared by every 'vk search' scope. Passing the
+# search root straight to rg (rather than cd-ing into it) means the
+# paths rg prints are always valid from the caller's cwd - required for
+# the global case, which runs before any cd_vault.
+#
+# gum's filter widget can only pick one matching mode (fuzzy vs
+# start-of-word substring) per invocation - there's no keybind to swap
+# it live mid-search - so the "toggle" is a one-keypress mode picker
+# shown just before the search box, pre-selected on whichever mode was
+# used last time (mirrors get_vault()'s last-vault memory): Enter alone
+# keeps the current mode, one arrow+Enter switches it.
 search_content() {
     local root="$1"
     local placeholder="${2:-Search body content...}"
-    local selection
+    local mode selection fuzzy_flag
+    mode=$(cat "$VK_SEARCH_MODE_FILE" 2>/dev/null || echo "Fuzzy")
+    mode=$("$GUM_BIN" choose --header "Search mode:" --selected "$mode" "Fuzzy" "Substring")
+    [ -z "$mode" ] && exit 1
+    mkdir -p "$VK_STATE_DIR"
+    printf '%s' "$mode" > "$VK_SEARCH_MODE_FILE"
+    if [ "$mode" = "Fuzzy" ]; then fuzzy_flag="--fuzzy"; else fuzzy_flag="--no-fuzzy"; fi
     # gum >=0.14 dropped the old --ansi flag in favor of --strip-ansi/
     # --no-strip-ansi (default: don't strip), so no flag is needed here
     # to preserve rg's --color=always highlighting.
-    selection=$("$RG_BIN" --line-number --no-heading --color=always --glob '!.vk-staging/**' --glob '!exports/**' --glob '!_build/**' . "$root" | "$GUM_BIN" filter --placeholder "$placeholder")
+    selection=$("$RG_BIN" --line-number --no-heading --color=always --glob '!.vk-staging/**' --glob '!exports/**' --glob '!_build/**' . "$root" | "$GUM_BIN" filter "$fuzzy_flag" --placeholder "$placeholder ($mode)")
     if [ -z "$selection" ]; then exit 1; fi
     local file line
     file=$(echo "$selection" | cut -d: -f1)
@@ -838,10 +857,13 @@ vk - Terminal-first wiki & Zettelkasten engine
 
 Usage:
   vk new                                    Create a new vault (interactive)
-  vk note [vault]                           Create/edit/delete/search notes (interactive)
+  vk note [vault]                           Create/edit/rename/delete notes (interactive)
   vk import [vault]                         Import content into a note: File/Code/Clipboard/
                                              Bibentry/Link/Page (interactive)
-  vk search [vault|all]                     Substring-search one vault, or every vault at once
+  vk search [vault|all]                     Fuzzy/substring-search one vault, or every vault
+                                             at once - prompts for scope if omitted, and for a
+                                             search mode (remembers your last pick; Enter alone
+                                             keeps it)
   vk rename [old] [new]                     Rename a vault (dir + baked-in title strings)
   vk build [vault] [--serve] [--all] [-p|--port PORT] [-b|--bind ADDR] [-0|--public]
                                              Build a static HTML site with MyST (one vault, or
@@ -940,7 +962,7 @@ GITIGNOREEOF
         VAULT_NAME=$(get_vault "${2:-}")
         cd_vault "$VAULT_NAME"
 
-        ACTION=$("$GUM_BIN" choose "Create Note" "Edit Note" "Rename/Move File" "Delete Note" "Fuzzy Search Text")
+        ACTION=$("$GUM_BIN" choose "Create Note" "Edit Note" "Rename/Move File" "Delete Note")
 
         case "$ACTION" in
             "Create Note")
@@ -978,10 +1000,6 @@ GITIGNOREEOF
                 NEW_REL=$("$GUM_BIN" input --placeholder "New path (relative to vault root, e.g. materials/new-name.md)..." --value "$OLD_REL")
                 if [ -z "$NEW_REL" ] || [ "$NEW_REL" = "$OLD_REL" ]; then exit 1; fi
                 "$PYTHON_BIN" "$VK_NOTE_RENAME" "$PWD" "$OLD_REL" "$NEW_REL"
-                ;;
-
-            "Fuzzy Search Text")
-                search_content "." "Search $VAULT_NAME..."
                 ;;
         esac
         ;;
@@ -1552,7 +1570,7 @@ $META_BLOCK"
         # below) is the one true "quit" out of this loop.
         while true; do
             ACTION=$("$GUM_BIN" choose --header "vk - Interactive CLI Management Hub" \
-                "search (Find Across Vaults)" \
+                "search (Search a Vault, or All Vaults)" \
                 "note (Create/Edit/Rename/Delete Notes)" \
                 "vault (New / Rename / Check a Vault)" \
                 "watch-all (Live Preview - All Vaults)" \
