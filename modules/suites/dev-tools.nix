@@ -31,6 +31,27 @@ let
 
   leanStarterSrc = ../features/lean/lean-starter;
 
+  # Shared by mk-lean and update-lean: sync the project's lean-toolchain
+  # to whatever its resolved dependencies actually agree on. A freshly
+  # scaffolded project's `lean-toolchain` pins a floating `stable` alias,
+  # but a dependency (e.g. CSLib, and transitively Mathlib) usually pins
+  # a specific release/rc - lake refuses to auto-overwrite an explicit
+  # pin with a dependency's, so it just warns forever and skips
+  # `lake exe cache get`. Majority-vote across every resolved
+  # dependency's own lean-toolchain (mirrors lake's own "multiple
+  # candidates" list) and adopt that instead - virtually always
+  # unanimous once Mathlib-adjacent deps are involved, and works for any
+  # Lean project, not just ones scaffolded via mk-lean.
+  leanToolchainSyncSnippet = ''
+    if [ -d .lake/packages ]; then
+      RESOLVED=$(cat .lake/packages/*/lean-toolchain 2>/dev/null | sort | uniq -c | sort -rn | head -1 | awk '{print $2}')
+      CURRENT=$(cat lean-toolchain 2>/dev/null || true)
+      if [ -n "$RESOLVED" ] && [ "$RESOLVED" != "$CURRENT" ]; then
+        echo "$RESOLVED" > lean-toolchain
+      fi
+    fi
+  '';
+
   # mdformat + mdformat-myst, bundled into one Python env so mdformat's
   # plugin auto-discovery (entry points) picks up the MyST target spec
   # automatically. mdformat-myst only understands MyST's *backtick*
@@ -200,7 +221,9 @@ in
       ++ lib.optional cfg.lean (pkgs.writeShellScriptBin "mk-lean" ''
         #!/usr/bin/env bash
         # mk-lean - scaffold a new Lean 4 project from the lean-starter
-        # template (Batteries/Aesop/Qq/CSLib pre-declared).
+        # template (Batteries/Aesop/Qq/CSLib pre-declared), then resolve
+        # dependencies and sync the toolchain so it builds cleanly out
+        # of the box.
         # Usage: mk-lean <target-dir>
         set -e
         if [ -z "$1" ]; then
@@ -214,7 +237,37 @@ in
         fi
         cp -r ${leanStarterSrc} "$TARGET"
         chmod -R u+w "$TARGET"
-        echo "Created $TARGET from lean-starter. Next: cd $TARGET && lake update && lake build"
+        echo "Created $TARGET from lean-starter. Resolving dependencies (lake update)..."
+        (
+          cd "$TARGET"
+          lake update
+          ${leanToolchainSyncSnippet}
+        )
+        LEAN_TOOLCHAIN=$(cat "$TARGET/lean-toolchain" 2>/dev/null || echo "(unknown)")
+        echo "✓ $TARGET is ready on $LEAN_TOOLCHAIN. Next: cd $TARGET && lake exe cache get && lake build"
+      '')
+      ++ lib.optional cfg.lean (pkgs.writeShellScriptBin "update-lean" ''
+        #!/usr/bin/env bash
+        # update-lean - refresh an existing Lean 4 project's dependencies
+        # (lake update) and keep its lean-toolchain synced to whatever
+        # they resolve to - the same fix mk-lean applies at scaffold
+        # time (see leanToolchainSyncSnippet's own comment in
+        # dev-tools.nix), just re-runnable against an existing project
+        # any time dependencies move to a new toolchain.
+        # Usage: update-lean [project-dir]  (defaults to .)
+        set -e
+        TARGET="''${1:-.}"
+        if [ ! -f "$TARGET/lakefile.toml" ] && [ ! -f "$TARGET/lakefile.lean" ]; then
+          echo "update-lean: '$TARGET' doesn't look like a Lean project (no lakefile.toml/lakefile.lean)" >&2
+          exit 1
+        fi
+        (
+          cd "$TARGET"
+          lake update
+          ${leanToolchainSyncSnippet}
+        )
+        LEAN_TOOLCHAIN=$(cat "$TARGET/lean-toolchain" 2>/dev/null || echo "(unknown)")
+        echo "✓ Updated $TARGET, now on $LEAN_TOOLCHAIN. Next: cd $TARGET && lake exe cache get && lake build"
       '');
 
     alienPackages.enabledPackages = appSet.alienEnabled;
