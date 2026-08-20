@@ -62,6 +62,20 @@ let
     fi
   '';
 
+  # Used by mk-lean only, after everything else is scaffolded/resolved
+  # (so the initial commit captures a fully-resolved project: synced
+  # lean-toolchain, generated flake.lock, lake-manifest.json) - git
+  # init + a single "scaffold" commit, skipped gracefully if git isn't
+  # available or a repo already exists (e.g. re-running against a dir
+  # that's already a git checkout).
+  leanGitInitSnippet = ''
+    if command -v git >/dev/null 2>&1 && [ ! -d .git ]; then
+      git init -q
+      git add -A
+      git commit -q -m "Scaffold Lean project from lean-starter (mk-lean)" || true
+    fi
+  '';
+
   # mdformat + mdformat-myst, bundled into one Python env so mdformat's
   # plugin auto-discovery (entry points) picks up the MyST target spec
   # automatically. mdformat-myst only understands MyST's *backtick*
@@ -231,10 +245,14 @@ in
       ++ lib.optional cfg.lean (pkgs.writeShellScriptBin "mk-lean" ''
         #!/usr/bin/env bash
         # mk-lean - scaffold a new Lean 4 project from the lean-starter
-        # template (Batteries/Aesop/Qq/CSLib pre-declared, plus a
-        # direnv .envrc + flake.nix dev shell for elan/lake/git), then
-        # resolve dependencies and sync the toolchain so it builds
-        # cleanly out of the box.
+        # template (Batteries/Aesop/Qq/CSLib pre-declared; a direnv
+        # .envrc + flake.nix dev shell for elan/lake/git/uv; an
+        # AGENTS.md-centered agent-assisted-formalization workflow -
+        # agents/, memory-bank/, docs/ - plus a Lean MCP server config
+        # for Copilot CLI/OpenCode and a version-drift checker script),
+        # then resolve dependencies, sync the toolchain, lock the
+        # flake, and git-init a single scaffold commit so it builds and
+        # is versioned cleanly out of the box.
         #
         # The project/module name is auto-derived from the target
         # directory's basename: a kebab-case project name (used for
@@ -274,9 +292,10 @@ in
           lake update
           ${leanToolchainSyncSnippet}
           ${leanFlakeLockSnippet}
+          ${leanGitInitSnippet}
         )
         LEAN_TOOLCHAIN=$(cat "$TARGET/lean-toolchain" 2>/dev/null || echo "(unknown)")
-        echo "✓ $TARGET is ready on $LEAN_TOOLCHAIN."
+        echo "✓ $TARGET is ready on $LEAN_TOOLCHAIN (git-initialized)."
         echo "Next: cd $TARGET && direnv allow && lake exe cache get && lake build"
       '')
       ++ lib.optional cfg.lean (pkgs.writeShellScriptBin "update-lean" ''

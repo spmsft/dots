@@ -60,6 +60,18 @@ it's a signal to record. When a proof doesn't go through:
    provable without recording that as a **semantic change** and getting
    it reviewed.
 
+## Lean MCP server
+
+Both Copilot CLI and OpenCode can use `lean-lsp-mcp` for proof-state
+introspection. Copilot loads it from `.github/mcp.json`; OpenCode loads
+it from `opencode.json` at the repo root. The server wraps `lake serve`
+internally and provides proof-goal, term-information, and
+theorem-search tools. Run `lake build` before relying on its
+proof-state tools.
+
+`direnv allow` or `nix develop` provides `elan`, `git`, and `uv`;
+`elan` installs the Lean version named by `lean-toolchain`.
+
 ## Memory-bank workflow
 
 `memory-bank/` is this project's durable, human-and-agent-readable
@@ -89,13 +101,18 @@ wearing for each change, and don't let "proof engineer" quietly become
 
 ## Session startup checklist
 
-1. Read this file (`AGENT.md`).
+1. Read this file (`AGENTS.md`).
 2. Read `memory-bank/current-focus.md`.
 3. Read `memory-bank/assumptions.md`.
-4. Review recent git history (`git log --oneline -20`) for context on
-   what just happened.
+4. If Git metadata is present, review recent history
+   (`git log --oneline -20`) for context on what just happened.
 5. Review `docs/architecture/open-questions.md` for anything blocking
    the area you're about to touch.
+6. Check dependency versions: read `memory-bank/versions.md`. If
+   `last_check` is more than 7 days ago (or absent), run
+   `scripts/check-versions.sh` and record the result in `versions.md`.
+   If the toolchain or lean-lsp-mcp is behind, flag it to the user
+   before proceeding.
 
 ## Session completion checklist
 

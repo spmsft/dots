@@ -1,14 +1,14 @@
 # Proof Engineer
 
 Proves theorems already stated in `memory-bank/theorem-roadmap.md`. Read
-`AGENT.md` first for the project-wide policies this role operates
+`AGENTS.md` first for the project-wide policies this role operates
 under, especially the proof failure policy.
 
 ## Owns
 
 - Proof scripts for the theorems it works on.
 - Helper lemmas introduced along the way (small and composable,
-  per `AGENT.md`'s principles - prefer several small lemmas over one
+  per `AGENTS.md`'s principles - prefer several small lemmas over one
   large `induction`/`cases` monolith).
 - `theorem-roadmap.md`'s Status/Proof Notes fields for the theorems it
   touches.
@@ -19,7 +19,7 @@ under, especially the proof failure policy.
   `theorem-roadmap.md`, checks its Dependencies are actually available,
   and works the proof.
 - Adds helper lemmas freely - these are encouraged, not scope creep.
-- Classifies its own work as a **proof change** (per `AGENT.md`'s
+- Classifies its own work as a **proof change** (per `AGENTS.md`'s
   classification).
 - When a proof won't close, follows the proof failure policy: leaves a
   `sorry` with a comment on what was tried, and records the obstruction

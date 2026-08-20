@@ -29,18 +29,33 @@ tell you - copy the version string from the failing dependency's
 project's `lean-toolchain` and re-run `lake update`. This is normal
 Lean/Lake workflow, not something Nix or elan can resolve for you.
 
+## Lean MCP server
+
+`.github/mcp.json` (Copilot CLI) and `opencode.json` (OpenCode) both
+configure [`lean-lsp-mcp`](https://github.com/oOo0oOo/lean-lsp-mcp),
+which wraps `lake serve` and exposes proof-goal, term-information, and
+theorem-search tools to an agent. It runs via `uvx`, provided by this
+project's `flake.nix` dev shell - `direnv allow`/`nix develop`, then
+`lake build` once before relying on its proof-state tools.
+`scripts/check-versions.sh` compares the pinned `lean-lsp-mcp`/Lean
+toolchain versions against upstream; see `memory-bank/versions.md`.
+
 ## Layout
 
 - `lakefile.toml` - project + dependency manifest
 - `lean-toolchain` - pinned Lean release (elan reads this)
 - `LeanStarter.lean` / `LeanStarter/` - library root and submodules
 - `Main.lean` - executable entry point (`lean-exe` target)
-- `AGENT.md` - entry point for AI-agent-assisted formalization work
+- `AGENTS.md` - entry point for AI-agent-assisted formalization work
   (project principles, change classification, proof-failure policy,
   session checklists) - point any agent here first
 - `agents/` - one file per role (semantic architect / Lean encoder /
   proof engineer / reviewer)
 - `memory-bank/` - durable session-spanning state (current focus,
-  assumptions, theorem roadmap, semantic model, review findings)
+  assumptions, theorem roadmap, semantic model, review findings,
+  pinned dependency versions)
 - `docs/architecture/` - modelling decisions and open questions;
   `docs/tooling/` - non-binding tooling recommendations
+- `.github/mcp.json`, `opencode.json` - Lean MCP server config (see
+  above); `scripts/check-versions.sh` - checks pinned versions against
+  upstream

@@ -3,7 +3,7 @@
 The theorem inventory: one entry per theorem, proved, in-progress, or
 merely planned. This is the Semantic Architect's map of what needs
 proving and why - check here before picking up proof work, and update
-status here as work progresses (see `AGENT.md`'s session-completion
+status here as work progresses (see `AGENTS.md`'s session-completion
 checklist).
 
 ## Format

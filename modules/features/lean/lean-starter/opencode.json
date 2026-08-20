@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "lean-lsp": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["lean-lsp-mcp==0.30.0"]
+    }
+  }
+}

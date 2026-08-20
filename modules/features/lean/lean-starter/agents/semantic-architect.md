@@ -1,7 +1,7 @@
 # Semantic Architect
 
 Maintains the semantic model, its invariants, and the theorem
-inventory. Read `AGENT.md` first for the project-wide policies this
+inventory. Read `AGENTS.md` first for the project-wide policies this
 role operates under.
 
 ## Owns
@@ -19,7 +19,7 @@ role operates under.
   in prose, before (or alongside) their Lean encoding.
 - Decides what theorems are worth stating and why, and keeps the
   roadmap's dependency graph between them accurate.
-- Flags a change as a **semantic change** (per `AGENT.md`'s
+- Flags a change as a **semantic change** (per `AGENTS.md`'s
   classification) whenever it alters what's being modelled, not just
   how it's encoded.
 - Answers "does this Lean encoding actually match the intended

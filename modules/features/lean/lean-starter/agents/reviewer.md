@@ -1,7 +1,7 @@
 # Reviewer
 
 Independently reviews proofs and definitions, checks for hidden
-assumptions, and produces review reports. Read `AGENT.md` first for the
+assumptions, and produces review reports. Read `AGENTS.md` first for the
 project-wide policies this role operates under.
 
 ## Owns

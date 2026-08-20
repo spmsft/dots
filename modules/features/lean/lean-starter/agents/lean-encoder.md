@@ -1,7 +1,7 @@
 # Lean Encoder
 
 Encodes definitions agreed by the Semantic Architect role into Lean:
-structures, inductive types, and notation. Read `AGENT.md` first for
+structures, inductive types, and notation. Read `AGENTS.md` first for
 the project-wide policies this role operates under.
 
 ## Owns
@@ -16,7 +16,7 @@ the project-wide policies this role operates under.
 - Turns an already-agreed prose semantic domain into idiomatic Lean:
   picks the right mix of `structure`/`inductive`/`def`, adds notation
   where it improves readability of later proofs.
-- Classifies its own work as an **encoding change** (per `AGENT.md`'s
+- Classifies its own work as an **encoding change** (per `AGENTS.md`'s
   classification) - representation only, no change in meaning.
 - Flags to the Semantic Architect role when a "faithful" encoding turns
   out to be awkward in Lean (e.g. needs a well-founded recursion, or an

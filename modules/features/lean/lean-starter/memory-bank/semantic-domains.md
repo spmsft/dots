@@ -6,7 +6,7 @@ encoded in Lean. This is the Semantic Architect's primary artifact, and
 what the Lean Encoder role encodes *from* - if a Lean definition and
 this file disagree, this file is describing the intent and the Lean
 code is what needs fixing (or this file needs updating first, as an
-explicit semantic change - see `AGENT.md`'s change classification).
+explicit semantic change - see `AGENTS.md`'s change classification).
 
 Keep entries independent of Lean syntax where possible (write "a
 configuration is a pair of a term and a store", not "`Config` is a

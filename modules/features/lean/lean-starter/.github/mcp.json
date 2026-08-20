@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "lean-lsp": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["lean-lsp-mcp==0.30.0"]
+    }
+  }
+}

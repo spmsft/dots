@@ -34,8 +34,8 @@ failed*, none of which the type checker will ever tell you.
 ## Workflow
 
 Read `current-focus.md` and `assumptions.md` at the start of every
-session (see `AGENT.md`'s session-startup checklist). Update
+session (see `AGENTS.md`'s session-startup checklist). Update
 `current-focus.md`, `theorem-roadmap.md`, and any file whose subject
-matter you touched, before ending a session (see `AGENT.md`'s
+matter you touched, before ending a session (see `AGENTS.md`'s
 session-completion checklist). Treat stale memory-bank entries as a bug
 - if you notice one while working on something else, fix it in passing.
