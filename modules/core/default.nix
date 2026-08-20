@@ -74,6 +74,7 @@ home.packages = with pkgs; [
     time                  # time
     mmv                   # mmv
     iproute2              # 'ss' - listening-socket enumeration (used by dots-ports)
+    pv                    # 'cat' with a progress bar (pipeline throughput monitoring)
         
     # --- 2. ENHANCED WORKFLOW (Modern Unix Replacements) ---
     # Tools that upgrade the interactive Bash experience
