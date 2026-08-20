@@ -29,47 +29,18 @@ tell you - copy the version string from the failing dependency's
 project's `lean-toolchain` and re-run `lake update`. This is normal
 Lean/Lake workflow, not something Nix or elan can resolve for you.
 
-## Editor support
-
-Helix (25.07.1+, `hx --health lean`) already ships built-in Lean 4
-support (tree-sitter grammar + a `lake serve`-based language server) -
-no `~/.config/helix/languages.toml` changes are needed. Just make sure
-`lake`/`lean` resolve on PATH (`elan` handles this).
-
-Helix has no built-in goal-state/InfoView panel (that's VSCode-specific,
-webview-based UI) - you get hover/diagnostics/completions via the LSP,
-but not an interactive goal tree. This repo packages
-[lean-helix-view](https://github.com/wyattgill9/lean-helix-view) (a
-`lake serve` proxy + ratatui goal/diagnostics viewer) as
-`pkgs/lean-helix-view.nix`, installed via
-`suites.dev-tools.leanHelixView` (off by default - enable it per-host
-in your `dots-local`). When enabled:
-
-1. `~/.config/helix/languages.toml` (see
-   `settings/chromaden/home/.config/helix/languages.toml` for the
-   reference override) points Helix's `lean` language-server at
-   `lean-helix-view proxy -- lake serve` instead of `lake serve`
-   directly - Helix talks to it exactly as before, transparently.
-2. Run `lean-helix-view watch` in a separate tmux/zellij pane from the
-   project root to see goals/diagnostics as you edit in Helix.
-
-## Agent-assisted formalization workflow
-
-This template also scaffolds a workflow for AI-agent-assisted formal
-semantics work: **[`AGENT.md`](AGENT.md)** is the entry point (project
-principles, change classification, proof-failure policy, session
-checklists), `agents/` has one file per role (semantic architect / Lean
-encoder / proof engineer / reviewer), `memory-bank/` is durable
-session-spanning state (current focus, assumptions, theorem roadmap,
-semantic model, review findings), and `docs/architecture/` +
-`docs/tooling/` hold longer-lived design decisions/open questions and
-tooling recommendations. Point any agent at `AGENT.md` first.
-
 ## Layout
 
 - `lakefile.toml` - project + dependency manifest
 - `lean-toolchain` - pinned Lean release (elan reads this)
 - `LeanStarter.lean` / `LeanStarter/` - library root and submodules
 - `Main.lean` - executable entry point (`lean-exe` target)
-- `AGENT.md`, `agents/`, `memory-bank/`, `docs/` - agent-assisted
-  formalization workflow (see above)
+- `AGENT.md` - entry point for AI-agent-assisted formalization work
+  (project principles, change classification, proof-failure policy,
+  session checklists) - point any agent here first
+- `agents/` - one file per role (semantic architect / Lean encoder /
+  proof engineer / reviewer)
+- `memory-bank/` - durable session-spanning state (current focus,
+  assumptions, theorem roadmap, semantic model, review findings)
+- `docs/architecture/` - modelling decisions and open questions;
+  `docs/tooling/` - non-binding tooling recommendations
